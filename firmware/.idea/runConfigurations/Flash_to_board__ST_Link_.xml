@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CLion 运行配置: 烧录到开发板 (ST-Link)
+
+  ⚠ 这个工程的 AntiTerrorRobot 目标是 ARM 固件, 不能用 CLion 默认的 Run 直接运行
+    (会报 CreateProcess error=193, 因为 Windows 无法执行 ARM ELF)。
+    正确用法:
+      · Build Project (Ctrl+F9)  -> 编译
+      · 这个配置 "Flash to board" -> 烧录
+      · 终端里 .\debug.ps1 -Gdb   -> 在线调试
+
+  CLion 里如果这个配置没自动出现 (不同版本 XML 字段略有差异), 手工加即可:
+    Run -> Edit Configurations -> + -> Shell Script
+      Name            : Flash to board (ST-Link)
+      Interpreter path: powershell.exe
+      Interpreter opts: -ExecutionPolicy Bypass -File
+      Script path     : $PROJECT_DIR$/../flash.ps1
+      Script options  : -Config Debug
+      Working dir     : $PROJECT_DIR$
+-->
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Flash to board (ST-Link)" type="ShConfigurationType">
+    <option name="SCRIPT_TEXT" value="" />
+    <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
+    <option name="SCRIPT_PATH" value="$PROJECT_DIR$/../flash.ps1" />
+    <option name="SCRIPT_OPTIONS" value="-Config Debug" />
+    <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
+    <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="INDEPENDENT_INTERPRETER_PATH" value="false" />
+    <option name="INTERPRETER_PATH" value="powershell.exe" />
+    <option name="INTERPRETER_OPTIONS" value="-ExecutionPolicy Bypass -File" />
+    <option name="EXECUTE_IN_TERMINAL" value="true" />
+    <option name="EXECUTE_SCRIPT_FILE" value="true" />
+    <envs />
+    <method v="2" />
+  </configuration>
+</component>

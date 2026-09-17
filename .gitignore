@@ -1,0 +1,25 @@
+# STM32 / CLion
+firmware/build/
+*.elf
+*.hex
+*.bin
+*.map
+*.o
+*.obj
+*.d
+.cache/
+compile_commands.json
+
+# CLion
+.idea/*
+!.idea/runConfigurations/
+!.idea/.gitignore
+cmake-build-*/
+
+# Python
+__pycache__/
+*.pyc
+
+# Windows
+Thumbs.db
+desktop.ini

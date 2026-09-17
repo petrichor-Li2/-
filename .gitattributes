@@ -1,0 +1,28 @@
+# 统一行尾, 避免 Windows/Linux 协作时整文件 diff
+* text=auto eol=lf
+
+# Windows 脚本保持 CRLF (PowerShell 5.1 最稳)
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# 源码
+*.c    text eol=lf
+*.h    text eol=lf
+*.s    text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.ld   text eol=lf
+
+# 二进制 / 编译产物: 不要做行尾转换
+*.hex    binary
+*.bin    binary
+*.elf    binary
+*.map    binary
+*.a      binary
+*.o      binary
+*.png    binary
+*.jpg    binary
+*.pdf    binary
