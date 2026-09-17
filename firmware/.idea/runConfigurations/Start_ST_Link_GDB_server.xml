@@ -1,14 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  CLion run configuration: start the ST-LINK GDB server (for debugging).
+  CLion run configuration: start the ST-LINK GDB server (为 ST-Link V2 烧录器下载/调试用).
 
-  用法: 先运行这个, 再运行 "GDB Remote Debug" 配置 (target remote tcp:localhost:61234);
-        或者直接在终端里用  .\debug.ps1 -Gdb  一步搞定。
+  ⚠ 就是这里报过 "错误: 找不到解释器" —— 解释器必须写【绝对路径】!
+      C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+    (换机器先用  where powershell  查一下)
+
+  用法: 先运行这个配置 (启动 ST-LINK_gdbserver, 监听 61234),
+        再运行 GDB Remote Debug 配置 (target remote tcp:localhost:61234);
+        或者直接在终端里  .\debug.ps1 -Gdb  一步搞定。
 
   如果没自动出现, 手工添加:
     Run -> Edit Configurations -> + -> Shell Script
       Name             : Start ST-Link GDB server
-      Interpreter path : powershell.exe
+      Interpreter path : C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
       Interpreter opts : -ExecutionPolicy Bypass -File
       Script path      : $PROJECT_DIR$/../debug.ps1
       Script options   : (留空)
@@ -21,7 +26,7 @@
     <option name="SCRIPT_PATH" value="$PROJECT_DIR$/../debug.ps1" />
     <option name="SCRIPT_OPTIONS" value="" />
     <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
-    <option name="INTERPRETER_PATH" value="powershell.exe" />
+    <option name="INTERPRETER_PATH" value="C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" />
     <option name="INTERPRETER_OPTIONS" value="-ExecutionPolicy Bypass -File" />
     <option name="EXECUTE_SCRIPT_FILE" value="true" />
     <option name="EXECUTE_IN_TERMINAL" value="true" />

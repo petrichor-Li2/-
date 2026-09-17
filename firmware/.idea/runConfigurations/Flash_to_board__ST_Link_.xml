@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  CLion run configuration: flash the firmware to the board over ST-Link.
+  CLion run configuration: flash the firmware to the board over ST-Link (ST-Link V2 也可).
+
+  ⚠ 解释器必须写【绝对路径】!
+    只写 powershell.exe 时 CLion 会在自己的运行环境里找不到, 直接报
+    "错误: 找不到解释器", 任务根本起不来。本机实测路径:
+      C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+    (若换机器, 用 cmd 里  where powershell  查一下再改)
 
   字段名已按 CLion 2026.2 的 com.intellij.sh.run.ShRunConfiguration 核对:
     SCRIPT_TEXT / SCRIPT_PATH / SCRIPT_OPTIONS / SCRIPT_WORKING_DIRECTORY
     INTERPRETER_PATH / INTERPRETER_OPTIONS / EXECUTE_SCRIPT_FILE / EXECUTE_IN_TERMINAL
-  (此前误写的 INDEPENDENT_* 在插件里并不存在, 已删除)
 
   如果这个配置没有自动出现, 手工添加 (约 20 秒):
     Run -> Edit Configurations -> + -> Shell Script
       Name             : Flash to board (ST-Link)
-      Interpreter path : powershell.exe
+      Interpreter path : C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
       Interpreter opts : -ExecutionPolicy Bypass -File
       Script path      : $PROJECT_DIR$/../flash.ps1
       Script options   : -Config Debug
@@ -27,7 +32,7 @@
     <option name="SCRIPT_PATH" value="$PROJECT_DIR$/../flash.ps1" />
     <option name="SCRIPT_OPTIONS" value="-Config Debug" />
     <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
-    <option name="INTERPRETER_PATH" value="powershell.exe" />
+    <option name="INTERPRETER_PATH" value="C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" />
     <option name="INTERPRETER_OPTIONS" value="-ExecutionPolicy Bypass -File" />
     <option name="EXECUTE_SCRIPT_FILE" value="true" />
     <option name="EXECUTE_IN_TERMINAL" value="true" />

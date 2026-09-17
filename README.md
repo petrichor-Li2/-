@@ -114,12 +114,18 @@ cmake --build build/Debug
 
    | 字段 | 值 |
    | :--- | :--- |
-   | Interpreter path | `powershell.exe` |
+   | Interpreter path | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` |
    | Interpreter options | `-ExecutionPolicy Bypass -File` |
    | Script path | `$PROJECT_DIR$/../flash.ps1` |
    | Script options | `-Config Debug` |
    | Working directory | `$PROJECT_DIR$` |
    | 勾选 | Execute in terminal |
+
+   > ⚠ **解释器必须写绝对路径**。只写 `powershell.exe` 时 CLion 会直接报
+   > **「错误: 找不到解释器」**，此时脚本根本不会被执行（所以 ST-LINK 的 GDB server
+   > 也起不来，很容易误以为是 ST-Link V2 坏了）——CLion 的运行配置**不会去 PATH 里找**，
+   > 这是它和你系统终端最大的区别。换电脑先在 cmd 里 `where powershell` 查路径。
+   > 本机只有 Windows PowerShell 5.1（没装 PowerShell 7），上面这个路径实测可用。
 
    **路线 3 — CLion 自带终端（100% 不会出错）**
    `Alt+F12` 打开 Terminal，或者连按两下 `Ctrl`（Run Anything）输入：
@@ -139,6 +145,8 @@ cmake --build build/Debug
 
    **方式 B（在 CLion 图形界面里调试）**
    * 先运行配置 **`Start ST-Link GDB server`**（或终端 `.\debug.ps1`）。
+     这个配置的 Interpreter path 同样必须是绝对路径
+     `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`，否则会报「找不到解释器」。
    * `Run → Edit Configurations → + → GDB Remote Debug`：
      * `target remote` 填 `tcp:localhost:61234`
      * Symbol file 选 `AntiTerrorRobot.elf`（`build/Debug/` 或 `cmake-build-debug/`）

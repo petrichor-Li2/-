@@ -3,6 +3,7 @@ param(
     [string]$Config = 'Debug',
 
     [int]$Port = 61234,
+    [int]$FreqKHz = 0,
     [switch]$Gdb,
     [switch]$Stop,
     [switch]$KeepAlive
@@ -83,6 +84,12 @@ Write-Host "Starting ST-LINK GDB server on port $Port ..." -ForegroundColor Cyan
 Write-Host "ELF: $elf" -ForegroundColor DarkGray
 
 $serverArgs = @('-p', $Port, '-d', '-s', '-m', '0', '-e', '-cp', $cpPath)
+if ($FreqKHz -gt 0) {
+    # ST-Link V2 (especially clones) can fail to handshake over long jumper wires;
+    # lowering SWD to 1000 or 500 kHz usually fixes it.
+    $serverArgs += @('--frequency', $FreqKHz)
+    Write-Host "SWD frequency limited to $FreqKHz kHz" -ForegroundColor DarkGray
+}
 $proc = Start-Process -FilePath $gdbserver -ArgumentList $serverArgs -PassThru
 $proc.Id | Set-Content -Path $pidFile -Encoding ASCII
 
@@ -132,4 +139,5 @@ Write-Host "  symbol file   :  $elf"
 Write-Host "  GDB           :  $gdbExe"
 Write-Host ""
 Write-Host "One-shot terminal debugging :  .\debug.ps1 -Gdb" -ForegroundColor Yellow
+Write-Host "Slow SWD for ST-Link V2 clone:  .\debug.ps1 -Gdb -FreqKHz 500" -ForegroundColor Yellow
 Write-Host "Stop the server             :  .\debug.ps1 -Stop" -ForegroundColor Yellow
