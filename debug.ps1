@@ -110,13 +110,15 @@ Write-Host "GDB server running (PID $($proc.Id))." -ForegroundColor Green
 # ---------------------------------------------------------------- gdb or hints
 if ($Gdb) {
     $gdbScript = Join-Path $env:TEMP 'antiterror.gdb'
+    # NOTE: this gdbserver's monitor commands are: help / reset / halt / swv / ...
+    #       there is NO "monitor reset halt" (that errors with "Unknown reset option").
     @"
 set confirm off
 set pagination off
 target extended-remote localhost:$Port
-monitor reset halt
+monitor reset
 load
-monitor reset halt
+monitor halt
 break main
 continue
 "@ | Set-Content -Path $gdbScript -Encoding ASCII

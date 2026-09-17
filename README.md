@@ -20,12 +20,14 @@ AntiTerrorRobot/
 │   ├── maix_protocol.py      ← 协议 Python 参考实现 (与两端逐字节一致)
 │   ├── test_maix_protocol.py ← 19 项协议单元测试
 │   ├── test_maixcam_vision.py← 13 项视觉算法测试 (伪造 maix 模块 + 合成形状图)
-│   └── maix_sim.py           ← PC 端 MaixCAM 模拟器, 可注入故障
+│   ├── maix_sim.py           ← PC 端 MaixCAM 模拟器, 可注入故障
+│   └── verify_flash.py       ← 烧录后校验: 芯片回读 vs .hex 逐字节比对
 ├── docs/
 │   ├── 通信协议.md
 │   └── 联调与现场调试.md
 ├── build.ps1                 ← 一键编译
-├── flash.ps1                 ← 一键烧录（自动寻找编译产物）
+├── flash.ps1                 ← 一键烧录（自动寻找产物；-Verify 自动回读校验）
+├── check_stlink.ps1          ← ST-Link 探头 / SWD 接线自检（含接线表与故障解读）
 ├── debug.ps1                 ← 启动 ST-LINK GDB server / 一键进入 GDB 调试
 └── run_tests.ps1             ← 一键跑完所有 PC 端测试
 ```
@@ -63,11 +65,54 @@ AntiTerrorRobot/
 cd D:\stm32ideproject\AntiTerrorRobot
 .\build.ps1                 # 编译 Debug 版
 .\build.ps1 -SelfTest       # 编译"自带协议自检"的版本 (独立目录, 不污染比赛固件)
-.\flash.ps1                 # 用 ST-Link 烧录 (自动找 build\ 或 cmake-build-debug\ 里的产物)
-.\flash.ps1 -Config Release # 烧录 Release 版
+.\check_stlink.ps1          # 先自检: 探头在不在? SWD 接线对不对? 芯片认不认?
+.\flash.ps1                 # 烧录 (自动找 build\ 或 cmake-build-debug\ 里的产物)
+.\flash.ps1 -Verify         # 烧录 + 回读校验 (逐字节确认芯片内容 == .hex)
 .\debug.ps1 -Gdb            # 在线调试: 启动 GDB server + 下载 + 断点
+.\debug.ps1 -Gdb -FreqKHz 500   # ST-Link V2 克隆版 / 长杜邦线握手不稳时降频
 .\debug.ps1 -Stop           # 关掉 GDB server
 ```
+
+### 2.1.1 烧录前先自检 ST-Link（强烈建议）
+
+```powershell
+.\check_stlink.ps1
+```
+
+本机实测输出（ST-Link V2 + STM32F407VGT6）：
+
+```
+== 1. USB ==            [OK] STM32 STLink
+== 2. SWD connect ==    ST-LINK SN : 37FF71064E5734364C6A1143
+                        ST-LINK FW : V2J45S7
+                        Voltage    : 3.27V          <- 板子已上电, 电平参考正常
+                        Device ID  : 0x413
+                        Device name: STM32F405xx/F407xx/F415xx/F417xx
+                        Flash size : 1 MBytes
+                        Device CPU : Cortex-M4
+== 3. Result ==         OK - probe found the chip. SWD wiring is correct.
+```
+
+它还会打印 **ST-Link V2 ↔ STM32F407 接线表**，并把失败分两类：
+* `No debug probe detected` → 电脑没认到探头（USB/驱动/克隆版固件太老）
+* `DEV_CONNECT_ERR` / `No STM32 target found` → 探头好但 SWD 没连上
+  （**最常见：GND 没接、SWDIO/SWCLK 接反、板子没上电、或探头已被别的程序占用**）
+
+> ⚠ **同一个 ST-Link 只能被一个程序使用**。如果 `.\debug.ps1` 起的 GDB server 还开着，
+> 或者 CLion 正在调试会话里，`flash.ps1` / `check_stlink.ps1` 都会报连接失败。
+> 先 `.\debug.ps1 -Stop`，CLion 那边停止调试会话，再烧录。
+
+### 2.1.2 烧录后校验芯片内容（可选但推荐）
+
+```powershell
+.\flash.ps1 -Verify
+# 或者单独跑: python tools\verify_flash.py <固件.hex> <回读.bin>
+```
+
+判定标准是**回读内容与 `.hex`（烧录器真正写进去的东西）逐字节一致**。
+注意：不要拿 `.bin` 直接比——`objcopy` 会把链接脚本的对齐空洞补 `0x00`，
+而 flash 擦除后是 `0xFF`，所以差几个 `0x00/0xFF` 是正常的（本项目实测 8 字节），
+`verify_flash.py` 会把这部分单独统计出来。
 
 手动等价命令：
 
@@ -157,6 +202,18 @@ cmake --build build/Debug
    （`View → Tool Windows → Serial Monitor`），选 USB-TTL 的 COM 口、**115200 8N1**，
    编码选 **UTF-8**（否则中文日志乱码）——不用再另开串口助手。
 
+7. **不开图形界面，直接把芯片里正在跑的状态读出来**（排查"到底跑到哪一步"很快）：
+   ```powershell
+   .\debug.ps1                      # 起 GDB server (用完 .\debug.ps1 -Stop)
+   # 然后在 firmware 目录下:
+   #   gdb -batch -ex "target extended-remote localhost:61234" \
+   #       -ex "print state" -ex "print qr_done" -ex "print qr_bomb_color" \
+   #       -ex "print g_maix_tx_frames" -ex "detach" -ex "quit" AntiTerrorRobot.elf
+   ```
+   实测（没接任何外设时）：`state = 11`（已跑到 S11）、`qr_done = 2`（用占位值 112）、
+   `retry_count = 3`（视觉 3 次重试后跳过）、`g_maix_tx_frames = 11`、`g_maix_rx_frames = 0`
+   ——说明固件在无外设时按设计优雅降级、全程不卡死。
+
 ### 2.3 CLion 里指定工具链（若自动找不到）
 
 `Settings → Build, Execution, Deployment → Toolchains → + → System`：
@@ -183,7 +240,14 @@ cmake --build build/Debug
 | PD12 / PD13 / PD14 | 三色 LED 红 / 绿 / 蓝 | 高电平点亮，占位显示机械臂/电机/激光动作 |
 | PB0 | 心跳灯 | 500 ms 翻转；S12 任务完成时常亮 |
 | PD15 | 650 nm 激光驱动 | 高电平开（低电平有效的驱动板改 `LASER_ACTIVE_HIGH 0`） |
+| **PA13** | **ST-Link SWDIO** | 调试/烧录用，**不要**接别的东西 |
+| **PA14** | **ST-Link SWCLK** | 调试/烧录用 |
+| NRST | ST-Link RST（可选） | 接上更稳，可支持 connect-under-reset |
 | GND | 三块板共地 | **必须共地**，否则串口乱码 |
+
+> ST-Link V2 那一侧是按功能丝印（`3.3V / SWDIO / SWCLK / GND / RST`），照名字对接即可。
+> 3.3V(VTref) 只作电平参考：板子自己有电源时不要再从探头取电，避免互相倒灌。
+> 本工程只用 PA13/PA14 做 SWD，**从不关闭调试口、也不进低功耗**，所以普通 SWD 一定能连上。
 
 > MaixCAM 端：默认用 **UART0**，A16 = TX → STM32 PA3(RX)，A17 = RX ← STM32 PA2(TX)，GND 共地。
 > ⚠ 官方提醒：UART0 是系统日志口（上电会吐启动日志，帧解析器会自动跳过垃圾字节），
