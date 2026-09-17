@@ -78,27 +78,39 @@ cmake --build build/Debug
 # 产物: build/Debug/AntiTerrorRobot.elf / .hex / .bin
 ```
 
-### 2.2 CLion
+### 2.2 CLion（编译 / 烧录 / 调试）
 
-> ⚠ **在 CLion 里不要点 Run（Shift+F10）**。`AntiTerrorRobot` 是 ARM 固件，
-> Windows 没法执行它，CLion 会报：
+> ⚠ **一句话规则：编译按 Build（Ctrl+F9），烧录用 ST-LINK 配置或脚本；不要按 Run 去"运行"这个 target。**
+> `AntiTerrorRobot` 是 ARM 固件，Windows 执行不了 `.elf`，点 Run 会报
 > `CreateProcess error=193, %1 不是有效的 Win32 应用程序`。
-> 这不是代码问题——**这个错误就说明已经编译成功了**，只是不能当电脑程序运行。
-> 正确流程是：**Build → 烧录 → （要调试时）GDB**。
+> **这个报错恰恰说明编译已经成功了**，只是嵌入式工程没有"在电脑上运行"这一步。
 
 1. `File → Open` 选 **`D:\stm32ideproject\AntiTerrorRobot\firmware`** 这个目录（不是仓库根目录）。
-2. **编译**：`Build → Build Project`（Ctrl+F9）。
-   * CLion 默认会用自己的 `firmware/cmake-build-debug` 目录，这没问题——
-     `flash.ps1` / `debug.ps1` 会自动找到那里或者 `firmware/build/…` 的产物。
+2. **编译**：`Build → Build Project`（Ctrl+F9），或用锤子图标。
+   * CLion 默认用自己的 `firmware/cmake-build-debug` 目录，这没问题——
+     `flash.ps1` / `debug.ps1` 会自动找到它，也会找 `firmware/build/…` 的产物。
    * 想让 CLion 用本工程的 CMake 预设（输出到 `firmware/build/Debug`）：
-     `Settings → Build, Execution, Deployment → CMake`，把 Profile 换成预设 `Debug`
-     （CLion 2026 支持 `CMakePresets.json`）。
-3. **删掉 CLion 自动建的那个运行配置**（否则容易手滑点到）：
-   `Run → Edit Configurations` → 选中 `AntiTerrorRobot` → 减号删除。
-4. **烧录**：`Run → Edit Configurations` 里应该有我预置的两个 Shell Script 配置
-   （`.idea/runConfigurations/` 下），直接运行 **`Flash to board (ST-Link)`** 即可。
-   如果没显示出来（不同 CLion 版本 XML 字段略有差异），手工加一个：
-   `+ → Shell Script`，填：
+     `Settings → Build, Execution, Deployment → CMake`，Profile 选预设 `Debug`。
+3. **删掉那两个 Application 型运行配置**（它们就是会报 193 的元凶）：
+   `Run → Edit Configurations` → 选中 `AntiTerrorRobot` 和 `configuration` → 点减号删除。
+
+4. **烧录（三条路，任选一条）**
+
+   **路线 1 — CLion 原生 ST-LINK（最正规，能烧也能调）**
+   CLion 2026.2 自带 `STM32 for CLion` 插件（内含 `ST-LINK` 调试配置类型），它会自动
+   检测 STM32CubeCLT 与 `ST-LINK_gdbserver`：
+   * `Settings → Build, Execution, Deployment → STM32`（或 Embedded Development）里
+     确认 CubeCLT 路径被识别，`ST-LINK GDB Server Executable` 指向
+     `D:\STM32CubeCLT_1.18.0\STLink-gdb-server\bin\ST-LINK_gdbserver.exe`。
+   * `Run → Edit Configurations → + → ST-LINK`，Name 随便起，Target 选
+     `AntiTerrorRobot.elf`（CMake profile 用 Debug），然后：
+     **点 Debug（虫子图标）= 烧录 + 进入调试**；需要纯下载时用该配置附带的下载动作。
+   * 前提：ST-Link 探头插好、板子上电（没插探头时 CLion 找不到目标，会提示 no probe）。
+
+   **路线 2 — 我预置的 Shell Script 配置（在 CLion 里一键烧录）**
+   `Run → Edit Configurations` 里选 **`Flash to board (ST-Link)`** 直接运行，
+   它会在 CLion 的 Terminal 里执行 `flash.ps1`，输出就在 CLion 里看。
+   如果这个配置没出现，手工加一个 `+ → Shell Script`：
 
    | 字段 | 值 |
    | :--- | :--- |
@@ -107,24 +119,35 @@ cmake --build build/Debug
    | Script path | `$PROJECT_DIR$/../flash.ps1` |
    | Script options | `-Config Debug` |
    | Working directory | `$PROJECT_DIR$` |
+   | 勾选 | Execute in terminal |
 
-5. **在线调试**（断点/单步/看变量），两种方式任选：
-
-   **方式 A（最省事，终端里直接调）**
+   **路线 3 — CLion 自带终端（100% 不会出错）**
+   `Alt+F12` 打开 Terminal，或者连按两下 `Ctrl`（Run Anything）输入：
    ```powershell
-   cd D:\stm32ideproject\AntiTerrorRobot
+   .\flash.ps1                 # 注意脚本在仓库根目录, 不是在 firmware 里
+   cd .. ; .\flash.ps1         # 如果终端当前在 firmware 目录
+   ```
+
+5. **在线调试（断点 / 单步 / 看变量）**
+
+   **方式 A（推荐，一条命令）**：`Alt+F12` 打开 Terminal →
+   ```powershell
+   cd ..
    .\debug.ps1 -Gdb
    ```
-   它会自动启动 ST-LINK GDB server、下载程序、停在 `main` 让你调试。
+   自动启动 ST-LINK GDB server → 下载 → 停在 `main`，就可以下断点、单步、看变量了。
 
-   **方式 B（在 CLion 图形界面里调）**
-   * 终端里先跑 `.\debug.ps1`（只启动 GDB server，端口 61234）。
-   * CLion：`Run → Edit Configurations → + → GDB Remote Debug`
+   **方式 B（在 CLion 图形界面里调试）**
+   * 先运行配置 **`Start ST-Link GDB server`**（或终端 `.\debug.ps1`）。
+   * `Run → Edit Configurations → + → GDB Remote Debug`：
      * `target remote` 填 `tcp:localhost:61234`
-     * Symbol file 选 `firmware/build/Debug/AntiTerrorRobot.elf`
-       （或 CLion 自己的 `cmake-build-debug/AntiTerrorRobot.elf`）
+     * Symbol file 选 `AntiTerrorRobot.elf`（`build/Debug/` 或 `cmake-build-debug/`）
      * GDB 选 `D:\STM32CubeCLT_1.18.0\GNU-tools-for-STM32\bin\arm-none-eabi-gdb.exe`
    * 用完 `.\debug.ps1 -Stop` 收工。
+
+6. **看串口日志**：CLion 2026.2 自带 **Serial Monitor** 工具窗口
+   （`View → Tool Windows → Serial Monitor`），选 USB-TTL 的 COM 口、**115200 8N1**，
+   编码选 **UTF-8**（否则中文日志乱码）——不用再另开串口助手。
 
 ### 2.3 CLion 里指定工具链（若自动找不到）
 

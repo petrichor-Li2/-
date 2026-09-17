@@ -1,33 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  CLion 运行配置: 启动 ST-LINK GDB server (给 "GDB Remote Debug" 配置连接用)
+  CLion run configuration: start the ST-LINK GDB server (for debugging).
 
-  用法:
-    1) 先跑这个配置 (它会在后台启动 ST-LINK_gdbserver, 端口 61234)
-    2) 再跑 "Debug (ST-Link gdbserver)" 的 GDB Remote Debug 配置
+  用法: 先运行这个, 再运行 "GDB Remote Debug" 配置 (target remote tcp:localhost:61234);
+        或者直接在终端里用  .\debug.ps1 -Gdb  一步搞定。
 
-  手工添加方式:
+  如果没自动出现, 手工添加:
     Run -> Edit Configurations -> + -> Shell Script
-      Name            : Start ST-Link GDB server
-      Interpreter path: powershell.exe
-      Interpreter opts: -ExecutionPolicy Bypass -File
-      Script path     : $PROJECT_DIR$/../debug.ps1
-      Script options  : (留空)
-      Working dir     : $PROJECT_DIR$
+      Name             : Start ST-Link GDB server
+      Interpreter path : powershell.exe
+      Interpreter opts : -ExecutionPolicy Bypass -File
+      Script path      : $PROJECT_DIR$/../debug.ps1
+      Script options   : (留空)
+      Working dir      : $PROJECT_DIR$
+      [x] Execute in terminal
 -->
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Start ST-Link GDB server" type="ShConfigurationType">
     <option name="SCRIPT_TEXT" value="" />
-    <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
     <option name="SCRIPT_PATH" value="$PROJECT_DIR$/../debug.ps1" />
     <option name="SCRIPT_OPTIONS" value="" />
-    <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
     <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
-    <option name="INDEPENDENT_INTERPRETER_PATH" value="false" />
     <option name="INTERPRETER_PATH" value="powershell.exe" />
     <option name="INTERPRETER_OPTIONS" value="-ExecutionPolicy Bypass -File" />
-    <option name="EXECUTE_IN_TERMINAL" value="true" />
     <option name="EXECUTE_SCRIPT_FILE" value="true" />
+    <option name="EXECUTE_IN_TERMINAL" value="true" />
     <envs />
     <method v="2" />
   </configuration>
