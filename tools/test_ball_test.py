@@ -408,6 +408,122 @@ class TestRunLoop(unittest.TestCase):
         self.assertIn("未找到红球", out)
 
 
+class TestDistanceFilter(unittest.TestCase):
+    """第二轮新增: 用像素宽度反推距离, 只接受 5~15cm"""
+
+    def setUp(self):
+        self.t = make_tester()
+        ball_test.now_ms = Clock(0)
+        ball_test.PRINT_MOVE_PX = 20
+        ball_test.PRINT_MIN_INTERVAL_MS = 1000
+        ball_test.CALIB_DISTANCE_CM = 10.0
+        ball_test.DIST_MIN_CM = 5.0
+        ball_test.DIST_MAX_CM = 15.0
+        ball_test.CALIB_WIDTH_PX = 0.0
+
+    def tearDown(self):
+        ball_test.CALIB_WIDTH_PX = 0.0
+
+    def detect(self, boxes):
+        return ball_test.detect_color(img_with(red=boxes), 1)
+
+    # ---- 未标定: 不卡距离, 只给 w ----
+    def test_uncalibrated_does_not_filter(self):
+        best, rejects = self.detect([(300, 140, 50, 50, 1963)])   # 很小(很远)
+        self.assertIsNotNone(best, "未标定时不该按距离过滤")
+        self.assertIsNone(best["dist"], "未标定时距离应为 None")
+        self.assertEqual(rejects, [])
+
+    # ---- 公式 d = K / w ----
+    def test_distance_math(self):
+        ball_test.CALIB_WIDTH_PX = 100.0        # 10cm -> 100px, 即 K = 1000
+        self.assertAlmostEqual(ball_test.estimate_distance_cm(100), 10.0, places=3)
+        self.assertAlmostEqual(ball_test.estimate_distance_cm(50), 20.0, places=3)
+        self.assertAlmostEqual(ball_test.estimate_distance_cm(200), 5.0, places=3)
+        self.assertIsNone(ball_test.estimate_distance_cm(0))
+
+    def test_in_range_passes_with_distance(self):
+        ball_test.CALIB_WIDTH_PX = 100.0
+        best, rejects = self.detect([(300, 140, 90, 90, 6360)])  # d = 1000/90 = 11.1cm
+        self.assertIsNotNone(best)
+        self.assertAlmostEqual(best["dist"], 11.1, places=1)
+        self.assertEqual(rejects, [])
+
+    def test_too_far_rejected(self):
+        """后面的东西(远) -> w 小 -> 距离大 -> 被排掉"""
+        ball_test.CALIB_WIDTH_PX = 100.0
+        best, rejects = self.detect([(300, 140, 50, 50, 1963)])  # d = 20cm
+        self.assertIsNone(best)
+        self.assertEqual(len(rejects), 1)
+        self.assertIn("距离", rejects[0][5])
+        self.assertIn("超出", rejects[0][5])
+
+    def test_too_close_rejected(self):
+        ball_test.CALIB_WIDTH_PX = 100.0
+        best, rejects = self.detect([(300, 140, 250, 250, 49087)])  # d = 4cm
+        self.assertIsNone(best)
+        self.assertIn("距离", rejects[0][5])
+
+    def test_boundary_values_pass(self):
+        ball_test.CALIB_WIDTH_PX = 100.0
+        # d = 5.0cm 正好在下限, 15.0cm 正好在上限 -> 都该通过
+        best, _ = self.detect([(10, 10, 200, 200, 31416)])       # d = 5.0
+        self.assertIsNotNone(best)
+        best, _ = self.detect([(10, 10, 67, 67, 3526)])          # d ≈ 14.9
+        self.assertIsNotNone(best)
+
+    def test_nearest_candidate_hint(self):
+        """"未找到"时要能看出是"太远被排掉"而不是"没识别到\""""
+        ball_test.CALIB_WIDTH_PX = 100.0
+        best, rejects = self.detect([(300, 140, 50, 50, 1963)])  # d = 20cm
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.t.report(1, best, rejects)
+        out = buf.getvalue()
+        self.assertIn("未找到红球", out)
+        self.assertIn("最近候选 20.0cm", out)
+        self.assertIn("超出 5~15cm", out)
+
+
+class TestScreenLabel(unittest.TestCase):
+    """第二轮 R3: 屏幕标签用数字形式(与串口 body 字段一致, 纯 ASCII)"""
+
+    def setUp(self):
+        self.t = make_tester()
+        self.t.disp = object()          # 非 None 才会走到画框分支
+        ball_test.now_ms = Clock(0)
+
+    def test_numeric_label(self):
+        img = img_with(red=[])
+        best = {"id": 1, "x": 300, "y": 140, "w": 60, "h": 60,
+                "pixels": 2827, "dist": None}
+        self.t.draw_result(img, [(1, best)])
+
+        rects = [d for d in img.drawn if d[0] == "rect"]
+        texts = [d[3] for d in img.drawn if d[0] == "text"]
+        self.assertEqual(len(rects), 1)
+        self.assertEqual(rects[0][1:], (300, 140, 60, 60))
+        self.assertEqual(len(texts), 1)
+        self.assertEqual(texts[0], "1 x300 y140 w60 h60")
+
+    def test_label_is_pure_ascii(self):
+        """之前中文被默认字体渲染成问号, 所以标签必须是纯 ASCII"""
+        img = img_with(red=[])
+        best = {"id": 3, "x": 10, "y": 20, "w": 30, "h": 40,
+                "pixels": 942, "dist": None}
+        self.t.draw_result(img, [(3, best)])
+        text = [d[3] for d in img.drawn if d[0] == "text"][0]
+        self.assertTrue(all(ord(c) < 128 for c in text), "标签里不该有非 ASCII 字符")
+
+    def test_draw_flag_off(self):
+        t = make_tester()
+        t.disp = None
+        img = img_with(red=[])
+        t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
+                                 "pixels": 10, "dist": None})])
+        self.assertEqual(img.drawn, [])
+
+
 if __name__ == "__main__":
     try:
         sys.stdout.reconfigure(errors="replace")

@@ -7,41 +7,45 @@
 ================================================================================
 
 【这一版是干什么的】
-  现在 MaixCAM 只通过 USB 连电脑(用 MaixVision 在线运行), 与 STM32 的串口还没接。
-  所以这一版**不参与整机联调**, 只做一件事:
-      把摄像头看到的红色小球找出来, 把 x/y/w/h 打印到 MaixVision 终端,
-      同时在 MaixCAM 屏幕上给球画个框并写上颜色名。
-  用来: 对着真实物体看识别准不准、看阈值宽窄、看画面不同位置的表现。
-
-【和 v1 的关系】
-  v1(接 STM32 的串口协议版)已备份在 maixcam/backup/main_v1_stm32_uart.py,
-  这一版完全独立, 不含任何 UART / 协议代码。将来联调直接跑 v1。
+  MaixCAM 现在只通过 USB 连电脑(用 MaixVision 在线运行), 与 STM32 的串口还没接。
+  所以这一版**不参与整机联调**, 只做三件事:
+      1. 把摄像头看到的红色小球找出来
+      2. 用像素宽度反推**距离**, 只保留 5~15cm 内的球(把"后面的东西"排掉)
+      3. 终端打印 + 屏幕画框(标签用数字形式, 与将来发给 STM32 的串口字段一致)
 
 【怎么跑】
   1. USB 线连 MaixCAM 与电脑, 打开 MaixVision
   2. 打开本文件, 点运行 -> 代码推送到设备执行
-  3. MaixVision 下方终端看打印; MaixCAM 屏幕看画框
+  3. MaixVision 终端看打印; MaixCAM 屏幕看画框
 
 【终端输出长这样】
   ===== 红球测试 v2 启动 =====
   分辨率 640x320  目标颜色 红(1)  阈值 [11, 68, 29, 75, 21, 33]
   过滤: 面积>=100px  长宽比 0.70~1.40  饱满度 0.50~0.92
-  打印: 有球<->无球切换立即打; 位移超过 20px 且间隔>1000ms 才再打
+  距离: **未标定** -> 现在不卡距离, 但会把 w 打出来
+  连续识别中...
   [  1.20s] 红(1) x=300 y=140 w=60 h=60
-  [  2.41s] 红(1) x=330 y=150 w=62 h=58  (中心 361,179)     <- 球动了才再打
-  [  3.02s] 未找到红球                                       <- 丢了立刻打
+  (标定后) [  2.41s] 红(1) x=330 y=150 w=62 h=58  距离≈9.7cm
+  [  3.02s] 未找到红球  (最近候选 21.3cm, 超出 5~15cm)
 
-【已确认的需求(见 maixcam/DEV_LOG.md)】
-  1  只测小球(排爆物球体)的颜色识别
-  2  打印字段: 包围盒 x/y/w/h (+颜色编号/名称, 否则不知道是哪一行)
-  3  终端打印 + 屏幕画框写字, 两者都要
-  4  球会移动, 不固定位置 -> 全画面检测, 不做 ROI 限定
-  5  暂不做 LAB 标定模式, 先用 v1 的三组阈值
-  6  先只测一种颜色: 红(1); 改一个常量即可切绿/蓝
-  7  打印只在结果变化时触发(见 PRINT_* 参数)
-  8  不带 UART 协议
-  9  不加截图 / 不加 FPS 显示(保持最小)
-  10 误识别过滤: 最小面积 + 圆度(长宽比 + 饱满度), 只要"像球的"
+【已确认的需求】
+  第一轮(详见 maixcam/DEV_LOG.md):
+    1  只测小球(排爆物球体)的颜色识别
+    2  打印字段: 包围盒 x/y/w/h (+颜色编号/名称)
+    3  终端打印 + 屏幕画框, 两者都要
+    4  球会移动 -> 全画面检测, 不做 ROI 限定
+    5  暂不做 LAB 标定模式, 先用 v1 的三组阈值
+    6  先只测一种颜色: 红(1)
+    7  打印只在结果变化时触发
+    8  不带 UART 协议
+    9  不加截图 / 不加 FPS 显示
+    10 误识别过滤: 最小面积 + 圆度(长宽比 + 饱满度)
+  第二轮(真机试跑后提出):
+    R1 距离限定 = 用像素大小反推距离, 并打印 cm 数
+    R2 只接受 5~15cm; 超出时打印"最近候选 xx cm"(区分"没找到"还是"太远被排掉")
+    R3 屏幕标签改成数字形式(与串口 body 字段一致): 1 x300 y140 w60 h60
+       终端保留中文+数字(真机已验证终端支持 UTF-8 中文)
+    R4 标定值先留空: 未标定时不卡距离, 只打印 w 和提示; 跑一次报 w 后再填
 ================================================================================
 """
 
@@ -56,7 +60,7 @@ from maix import app, camera, display, image
 # ---- 目标颜色: 1 红 / 2 绿 / 3 蓝 (赛题编码) ----
 TARGET_COLOR = 1
 
-# ---- 调试用: True 时三种颜色都找、各自独立打印, 用来比较哪个阈值太宽/太窄 ----
+# ---- 调试用: True 时三种颜色都找、各自独立打印 ----
 ALL_COLORS = False
 
 # ---- 相机 ----
@@ -71,20 +75,31 @@ COLOR_LAB = {
 }
 COLOR_NAME = {1: "红", 2: "绿", 3: "蓝"}
 
-# ---- 过滤: 只要"像球的" (第 11 问的结论) ----
+# ---- 过滤: 只要"像球的" ----
 MIN_AREA = 100          # 小于这么多像素的色块丢掉 (噪点/碎斑)
-ASPECT_MIN = 0.70       # 长宽比 w/h 下限: 球在画面里近似圆, 太扁/太细的不要
+ASPECT_MIN = 0.70       # 长宽比 w/h 下限 (球在画面里近似圆)
 ASPECT_MAX = 1.40       # 长宽比 w/h 上限
-FILL_MIN = 0.50         # 饱满度 = 像素数/(w*h): 圆的理想值是 π/4≈0.785
-FILL_MAX = 0.92         # 长方块/整块背景会接近 1.0, 上限卡掉
+FILL_MIN = 0.50         # 饱满度 = 像素数/(w*h): 圆的理想值 ≈ π/4 = 0.785
+FILL_MAX = 0.92         # 实心方块/整块背景 ≈ 1.0, 上限卡掉
 
-# ---- 打印策略 (第 7 问的结论) ----
+# ---- 距离限定 (第二轮 R1~R4) ----------------------------------------------
+#   原理: 球在画面里的宽度 w 与距离 d 成反比  ->  d = K / w
+#        K = CALIB_DISTANCE_CM * CALIB_WIDTH_PX
+#   标定: 把球放在 CALIB_DISTANCE_CM 处(比如 10cm), 读终端打印的 w,
+#         把它填进 CALIB_WIDTH_PX 即可(只做一次)
+CALIB_DISTANCE_CM = 10.0    # 标定时球放的距离 (cm)
+CALIB_WIDTH_PX = 0.0        # ★标定时读到的 w(像素); 0 = 还没标定(不卡距离)
+DIST_MIN_CM = 5.0           # 只接受这个范围内的球
+DIST_MAX_CM = 15.0
+PRINT_DISTANCE = True       # 打印估算距离
+
+# ---- 打印策略 ----
 PRINT_MOVE_PX = 20            # 中心点移动超过这么多像素才再打一行
 PRINT_MIN_INTERVAL_MS = 1000  # 位移打印的最小间隔(兜底限流); 有球/无球切换不受限
 SHOW_REJECT = False           # True: 打印结果时附带"被过滤掉的候选及原因"
 
 # ---- 屏幕显示 ----
-DRAW = True                   # 在屏幕上画框 + 写颜色名
+DRAW = True                   # 画框 + 写数字标签
 
 
 # ==============================================================================
@@ -132,10 +147,34 @@ def blob_pixels(b):
 
 
 # ==============================================================================
-# 三、识别: 找"像球的"色块
+# 三、距离估算 (第二轮 R1/R2/R4)
+# ==============================================================================
+def calib_ready():
+    return CALIB_WIDTH_PX > 0.0
+
+
+def estimate_distance_cm(w):
+    """
+    用像素宽度反推距离: d = K / w,  K = CALIB_DISTANCE_CM * CALIB_WIDTH_PX
+    未标定时返回 None (此时不卡距离, 只打印 w)
+    """
+    if (not calib_ready()) or w <= 0:
+        return None
+    return (CALIB_DISTANCE_CM * CALIB_WIDTH_PX) / float(w)
+
+
+def distance_ok(d):
+    """距离是否在接受范围内; 未标定(d=None)时一律通过"""
+    if d is None:
+        return True
+    return (DIST_MIN_CM <= d <= DIST_MAX_CM)
+
+
+# ==============================================================================
+# 四、识别: 找"像球的"色块
 # ==============================================================================
 def judge(w, h, pixels):
-    """对候选色块做形状判断; 返回 None = 通过, 否则返回被拒绝的原因"""
+    """形状判断; 返回 None = 通过, 否则返回被拒绝的原因"""
     if pixels < MIN_AREA:
         return "面积%d<%d" % (pixels, MIN_AREA)
     if w <= 0 or h <= 0:
@@ -157,10 +196,10 @@ _FIND_BLOBS_ERR_PRINTED = False
 
 def detect_color(img, color_id):
     """
-    在整幅画面里找指定颜色的"球"
+    在整幅画面里找指定颜色的"球": 形状合格 + 距离在范围内
     返回 (best, rejects):
-      best    = dict(id,x,y,w,h,pixels) 或 None (最大的那个合格候选)
-      rejects = [(x,y,w,h,pixels,原因), ...] 被过滤掉的候选, 方便调参数
+      best    = dict(id,x,y,w,h,pixels,dist) 或 None
+      rejects = [(x,y,w,h,pixels,原因), ...] 方便调参数
     """
     global _FIND_BLOBS_ERR_PRINTED
 
@@ -188,29 +227,51 @@ def detect_color(img, color_id):
     for b in blobs or []:
         x, y, w, h = blob_box(b)
         px = blob_pixels(b)
+
+        # ① 形状过滤 (只要像球的)
         reason = judge(w, h, px)
-        if reason is None:
-            if (best is None) or (px > best["pixels"]):
-                best = {"id": color_id, "x": x, "y": y, "w": w, "h": h,
-                        "pixels": px}
-        else:
+        if reason is not None:
             rejects.append((x, y, w, h, px, reason))
+            continue
+
+        # ② 距离过滤 (把后面的东西排掉)
+        d = estimate_distance_cm(w) if PRINT_DISTANCE else None
+        if not distance_ok(d):
+            rejects.append((x, y, w, h, px,
+                            "距离%.1fcm 超出 %.0f~%.0fcm"
+                            % (d, DIST_MIN_CM, DIST_MAX_CM)))
+            continue
+
+        if (best is None) or (px > best["pixels"]):
+            best = {"id": color_id, "x": x, "y": y, "w": w, "h": h,
+                    "pixels": px, "dist": d}
 
     return best, rejects
 
 
+def nearest_reject_cm(rejects):
+    """从被拒候选里找出最近的估算距离(用它的 w 反推), 给"未找到"一个解释"""
+    if not PRINT_DISTANCE or not calib_ready():
+        return None
+    ds = []
+    for r in rejects:
+        d = estimate_distance_cm(r[2])
+        if d is not None:
+            ds.append(d)
+    return min(ds) if ds else None
+
+
 # ==============================================================================
-# 四、主程序
+# 五、主程序
 # ==============================================================================
 def now_ms():
     return int(time.time() * 1000)
 
 
 class BallTester:
-    """每个颜色各有一套打印状态, 所以 ALL_COLORS=True 时也不会互相干扰"""
+    """每个颜色一套打印状态, ALL_COLORS=True 时也不会互相干扰"""
 
     def __init__(self):
-        # ---- 相机 ----
         try:
             self.cam = camera.Camera(CAM_WIDTH, CAM_HEIGHT)
         except Exception as e:
@@ -218,7 +279,6 @@ class BallTester:
                   % (CAM_WIDTH, CAM_HEIGHT), e)
             self.cam = camera.Camera()
 
-        # ---- 屏幕 ----
         self.disp = None
         if DRAW:
             try:
@@ -246,6 +306,15 @@ class BallTester:
             print("注意: ALL_COLORS=True, 三种颜色都会找并各自独立打印")
         print("过滤: 面积>=%dpx  长宽比 %.2f~%.2f  饱满度 %.2f~%.2f"
               % (MIN_AREA, ASPECT_MIN, ASPECT_MAX, FILL_MIN, FILL_MAX))
+        if calib_ready():
+            print("距离: 已标定 (%.0fcm 时 w=%dpx, K=%.0f)  只接受 %.0f~%.0fcm"
+                  % (CALIB_DISTANCE_CM, int(CALIB_WIDTH_PX),
+                     CALIB_DISTANCE_CM * CALIB_WIDTH_PX,
+                     DIST_MIN_CM, DIST_MAX_CM))
+        else:
+            print("距离: **未标定** -> 现在不卡距离, 但会把 w 打出来;")
+            print("      把球放到 %.0fcm 处, 读下面的 w=?? , 填进 CALIB_WIDTH_PX"
+                  % CALIB_DISTANCE_CM)
         print("打印: 有球<->无球切换立即打; 位移超过 %dpx 且间隔>%dms 才再打"
               % (PRINT_MOVE_PX, PRINT_MIN_INTERVAL_MS))
         if SHOW_REJECT:
@@ -262,7 +331,11 @@ class BallTester:
             if s["found"] is not False:              # 有球 -> 无球, 立刻打
                 line = "[%6.2fs] 未找到%s球" % (self.elapsed_s(),
                                                 COLOR_NAME[color_id])
-                if SHOW_REJECT and rejects:
+                nd = nearest_reject_cm(rejects)
+                if (nd is not None) and (not distance_ok(nd)):
+                    line += "  (最近候选 %.1fcm, 超出 %.0f~%.0fcm)" % (
+                        nd, DIST_MIN_CM, DIST_MAX_CM)
+                elif SHOW_REJECT and rejects:
                     line += "  (过滤掉: " + "; ".join(
                         "%dx%d %dpx %s" % (r[2], r[3], r[4], r[5])
                         for r in rejects) + ")"
@@ -292,6 +365,8 @@ class BallTester:
 
         line = "[%6.2fs] %s(%d) x=%d y=%d w=%d h=%d" % (
             self.elapsed_s(), COLOR_NAME[color_id], color_id, x, y, w, h)
+        if best.get("dist") is not None:
+            line += "  距离≈%.1fcm" % best["dist"]
         if moved:
             line += "  (中心 %d,%d)" % (cx, cy)
         if SHOW_REJECT and rejects:
@@ -305,17 +380,24 @@ class BallTester:
 
     # ------------------------------------------------------------------
     def draw_result(self, img, found_list):
-        """屏幕上给所有找到的球画框"""
+        """
+        屏幕上画框 + 写标签。
+        标签用**数字形式**(纯 ASCII), 字段顺序与将来发给 STM32 的串口 body 一致:
+            <颜色编号> x<> y<> w<> h<>
+        这样既避开了默认字体不支持中文的问题(之前显示成问号),
+        又和以后要发给单片机的数据完全对得上。
+        """
         if self.disp is None:
             return
         for cid, best in found_list:
             try:
                 x, y, w, h = best["x"], best["y"], best["w"], best["h"]
                 img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=2)
+
+                label = "%d x%d y%d w%d h%d" % (cid, x, y, w, h)
                 ty = y - 22 if y > 26 else y + 2
-                img.draw_string(x, ty,
-                                "%s %dx%d" % (COLOR_NAME[cid], w, h),
-                                color=image.COLOR_GREEN, scale=1.2)
+                img.draw_string(x, ty, label,
+                                color=image.COLOR_GREEN, scale=1.0)
             except Exception:
                 pass
 
