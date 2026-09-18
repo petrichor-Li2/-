@@ -730,6 +730,47 @@ class TestScreenLabel(unittest.TestCase):
                                          "h": 100, "pixels": 9000, "dist": None})])
         self.assertEqual(buf.getvalue().strip(), "")
 
+    def test_string_scale_int_fallback(self):
+        """有些固件的 scale 必须是整数: 传 1.0 报错时, 要能自动试到 scale=1"""
+        t = make_tester()
+        t.disp = object()
+        img = img_with(red=[])
+
+        def strict(x, y, s2, *a, **k):
+            if "scale" in k and not isinstance(k["scale"], int):
+                raise TypeError("scale must be int")
+            if len(a) >= 2 and not isinstance(a[1], int):
+                raise TypeError("scale must be int")
+            if "scale" not in k and len(a) < 2:
+                raise TypeError("scale is required")
+            img.drawn.append(("text", x, y, s2))
+
+        img.draw_string = strict
+        t.draw_string = None
+        t.draw_result(img, [(1, {"id": 1, "x": 10, "y": 20, "w": 30, "h": 40,
+                                 "pixels": 942, "dist": None})])
+        texts = [d for d in img.drawn if d[0] == "text"]
+        self.assertEqual(len(texts), 1, "应该自动试到 scale=1 这种写法并写出字")
+
+    def test_string_all_forms_fail_reports(self):
+        """写字所有写法都失败时, 要把原因打出来(不静默)"""
+        t = make_tester()
+        t.disp = object()
+        t.draw_err_seen = set()
+        img = img_with(red=[])
+
+        def boom(*a, **k):
+            raise TypeError("no draw_string support")
+
+        img.draw_string = boom
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
+                                     "pixels": 10, "dist": None})])
+        out = buf.getvalue()
+        self.assertIn("draw_string", out)
+        self.assertIn("都失败", out)
+
     def test_draw_flag_off(self):
         t = make_tester()
         t.disp = None

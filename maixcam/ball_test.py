@@ -563,25 +563,39 @@ class BallTester:
         return False
 
     def _draw_string(self, img, x, y, s, cid):
-        global _COLOR_MODE
+        """
+        写文字: 不同固件的参数写法/类型要求不一样, 依次尝试:
+          ① color= + scale=1(整数!)   ② 只给 color=   ③ 位置参数 (x,y,s,c,1)
+          ④ 位置参数 (x,y,s,c)        ⑤ 只给 (x,y,s)  ⑥ (x,y,s,c) 不带 scale
+        注意 scale 用整数: 官方文档是 scale=2, 传浮点 1.0 有些固件会抛 TypeError
+        """
         errs = []
         for name, c in color_candidates(cid):
-            try:
-                img.draw_string(x, y, s, color=c, scale=1.0)
-                return True
-            except Exception as e:
-                errs.append("%s -> %r" % (name, e))
-            # 有些固件的参数名不叫 color / scale
-            try:
-                img.draw_string(x, y, s, c, 1.0)
-                return True
-            except Exception as e:
-                errs.append("位置参数 -> %r" % (e,))
+            attempts = (
+                (dict(color=c, scale=1), "color=+scale=1"),
+                (dict(color=c), "color="),
+                ((c, 1), "位置(c,1)"),
+                ((c,), "位置(c)"),
+                ((), "位置()"),
+            )
+            for extra, how in attempts:
+                try:
+                    if isinstance(extra, dict):
+                        img.draw_string(x, y, s, **extra)
+                    else:
+                        img.draw_string(x, y, s, *extra)
+                    if DRAW_DEBUG and ("ok_string" not in self.draw_err_seen):
+                        self.draw_err_seen.add("ok_string")
+                        print("[提示] 写字可用的写法: 颜色=%s, %s" % (name, how))
+                    return True
+                except Exception as e:
+                    errs.append("%s/%s -> %r" % (name, how, e))
         if "draw_string" not in self.draw_err_seen:
             self.draw_err_seen.add("draw_string")
-            print("[错误] draw_string 各种写法都失败了:")
-            for e in errs[:4]:
+            print("[错误] draw_string 所有写法都失败了, 前几种原因:")
+            for e in errs[:6]:
                 print("        ", e)
+            print("        -> 把这几行发我, 我按你的固件改")
         return False
 
     # ------------------------------------------------------------------
