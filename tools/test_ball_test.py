@@ -685,8 +685,8 @@ class TestScreenLabel(unittest.TestCase):
 
         def rect(x, y, w, h, color=0, thickness=1):
             tried.append(color)
-            if not isinstance(color, int):          # 这个"固件"只认整数形式
-                raise TypeError("color must be int")
+            if not isinstance(color, tuple):        # 这个"固件"只认 RGB 元组
+                raise TypeError("color must be tuple")
             img.drawn.append(("rect", x, y, w, h))
 
         img.draw_rect = rect
@@ -694,9 +694,30 @@ class TestScreenLabel(unittest.TestCase):
                                  "pixels": 10, "dist": None})])
         self.assertEqual(len([d for d in img.drawn if d[0] == "rect"]), 1,
                          "应该降级到能用的颜色写法并把框画出来")
-        self.assertEqual(ball_test._COLOR_MODE, "rgb int",
+        self.assertEqual(ball_test._COLOR_MODE, "rgb tuple",
                          "并记住这次可用的写法")
         self.assertGreaterEqual(len(tried), 2, "至少试过两种写法")
+
+    def test_box_uses_white_by_default(self):
+        """默认白色粗框: 红球配红框会看不见, 所以框色不该跟球同色"""
+        t = make_tester()
+        t.disp = object()
+        img = img_with(red=[])
+        colors = []
+
+        def rect(x, y, w, h, color=0, thickness=1):
+            colors.append(color)
+            img.drawn.append(("rect", x, y, w, h))
+
+        img.draw_rect = rect
+        ball_test.RECT_COLOR_MODE = "white"
+        t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
+                                 "pixels": 10, "dist": None})])
+        self.assertEqual(len(colors), 1)
+        c = colors[0]
+        self.assertTrue(c == ball_test.RECT_COLOR_RGB[0] or
+                        (isinstance(c, int) and (c & 0xFFFFFF) == 0xFFFFFF),
+                        "框应该是白色(实际拿到 %r)" % (c,))
 
     def test_label_fixed_position(self):
         """LABEL_FIXED_POS=True: 标签固定写在左上角, 不受球的位置影响"""

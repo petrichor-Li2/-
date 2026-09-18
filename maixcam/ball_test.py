@@ -123,8 +123,15 @@ DRAW_SELFTEST = True     # True: 启动后前 2 秒在画面正中画一个测�
 LABEL_FIXED_POS = True   # True: 文字标签固定写在画面左上角(多个球依次往下排)
                          #       这样即使球的框在屏幕可见区域之外, 数字也一定看得到
                          #       False: 标签跟在框旁边(好看但可能跑出可见区域)
+# 框的颜色风格:
+#   "white" = 统一用白色粗框(推荐) —— 红球配红框会看不清, 白色在红/绿/蓝球和深色背景上都显眼
+#   "color" = 按检到的颜色画框(好看但同色球上会看不见)
+RECT_COLOR_MODE = "white"
+BOX_THICKNESS = 4        # 框的线宽(粗一点更容易看见)
 # 框色: 优先用 image 模块自带的常量(最兼容), 拿不到才用下面这组 RGB 元组
+#   下标 0 是"白色框"用的颜色
 RECT_COLOR_RGB = {
+    0: (255, 255, 255),  # 白色(统一框色)
     1: (255, 0, 0),      # 红球红框
     2: (0, 255, 0),      # 绿球绿框
     3: (0, 128, 255),    # 蓝球蓝框
@@ -164,7 +171,8 @@ def color_candidates(color_id):
         pass
 
     # ② image.COLOR_XXX 常量 —— 官网 find_blobs 例子里用的是 image.COLOR_GREEN
-    cname = {1: "COLOR_RED", 2: "COLOR_GREEN", 3: "COLOR_BLUE"}.get(color_id)
+    cname = {0: "COLOR_WHITE", 1: "COLOR_RED",
+             2: "COLOR_GREEN", 3: "COLOR_BLUE"}.get(color_id)
     if cname:
         c = getattr(image, cname, None)
         if c is not None:
@@ -541,12 +549,13 @@ class BallTester:
     # ------------------------------------------------------------------
     # 画图: 颜色写法自动试错 —— 不同 MaixPy 固件支持的形式不一样, 不再猜
     # ------------------------------------------------------------------
-    def _draw_rect(self, img, x, y, w, h, cid):
+    def _draw_rect(self, img, x, y, w, h, cid, thickness=None):
         global _COLOR_MODE
+        th = BOX_THICKNESS if thickness is None else thickness
         errs = []
         for name, c in color_candidates(cid):
             try:
-                img.draw_rect(x, y, w, h, color=c, thickness=2)
+                img.draw_rect(x, y, w, h, color=c, thickness=th)
                 if _COLOR_MODE is None:
                     _COLOR_MODE = name
                     if DRAW_DEBUG:
@@ -554,10 +563,18 @@ class BallTester:
                 return True
             except Exception as e:
                 errs.append("%s -> %r" % (name, e))
+            # 有的固件线宽参数类型要求更严(整数以外不接受), 退回默认线宽再试
+            try:
+                img.draw_rect(x, y, w, h, color=c)
+                if _COLOR_MODE is None:
+                    _COLOR_MODE = name
+                return True
+            except Exception as e:
+                errs.append("默认线宽 %s -> %r" % (name, e))
         if "draw_rect" not in self.draw_err_seen:
             self.draw_err_seen.add("draw_rect")
-            print("[错误] draw_rect 四种颜色写法都失败了:")
-            for e in errs:
+            print("[错误] draw_rect 各种颜色写法都失败了:")
+            for e in errs[:6]:
                 print("        ", e)
             print("        -> 把这几行发我, 我按你的固件改")
         return False
@@ -611,16 +628,18 @@ class BallTester:
         for i, (cid, best) in enumerate(found):
             x, y, w, h = best["x"], best["y"], best["w"], best["h"]
 
-            # ① 画框
-            self._draw_rect(img, x, y, w, h, cid)
+            # ① 画框: 默认白色粗框(红球配红框会看不见), 也可切成按颜色
+            box_cid = 0 if RECT_COLOR_MODE == "white" else cid
+            self._draw_rect(img, x, y, w, h, box_cid)
 
             # ② 写字(失败也不影响框)
             label = "%d x%d y%d w%d h%d" % (cid, x, y, w, h)
+            txt_cid = 0 if RECT_COLOR_MODE == "white" else cid
             if LABEL_FIXED_POS:
-                self._draw_string(img, 4, 4 + i * 24, label, cid)
+                self._draw_string(img, 4, 4 + i * 24, label, txt_cid)
             else:
                 ty = y - 22 if y > 26 else y + 2
-                self._draw_string(img, x, ty, label, cid)
+                self._draw_string(img, x, ty, label, txt_cid)
 
     # ------------------------------------------------------------------
     def warn_if_out_of_frame(self, found):
