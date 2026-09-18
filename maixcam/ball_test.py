@@ -115,9 +115,11 @@ SHOW_REJECT = False           # True: 打印结果时附带"被过滤掉的候�
 
 # ---- 屏幕显示 ----
 DRAW = True              # 画框 + 写数字标签
-DRAW_DEBUG = False       # True: 画框/写字失败时把错误原因打出来(排查"屏幕上没有框"时打开)
-DRAW_SELFTEST = False    # True: 启动后前 2 秒在画面正中画一个测试框 + "DRAW TEST"
-                         #       (用来区分"画图 API 有问题"和"没检测到球")
+DRAW_DEBUG = True        # True: 打印"当前用的是哪种颜色写法"/画图报错原文
+                         #       (正在排查"屏幕上没有框", 查完可以改回 False)
+DRAW_SELFTEST = True     # True: 启动后前 2 秒在画面正中画一个测试框 + "DRAW TEST"
+                         #       用来区分"画图 API 有问题"和"没检测到球"
+                         #       (正在排查, 查完可以改回 False)
 # 框色: 优先用 image 模块自带的常量(最兼容), 拿不到才用下面这组 RGB 元组
 RECT_COLOR_RGB = {
     1: (255, 0, 0),      # 红球红框
