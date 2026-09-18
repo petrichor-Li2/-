@@ -60,13 +60,23 @@ class FakeImage:
     find_blobs 按传入的阈值去查这张表 —— 这样我们就能精确控制"识别到什么"
     """
 
-    def __init__(self, lab_map=None):
+    def __init__(self, lab_map=None, rgb=None):
         self.lab_map = lab_map or {}
         self.drawn = []
+        self._w, self._h = 640, 320
+        self._d = bytearray(640 * 320)
+        self._rgb = rgb
 
     def find_blobs(self, thresholds, **kw):
         thr = tuple(thresholds[0])
         return list(self.lab_map.get(thr, []))
+
+    def get_pixel(self, x, y):
+        """真机上 get_pixel 返回列表(用户 tested.py 已验证), 这里保持一致"""
+        if self._rgb is not None:
+            off = (y * self._w + x) * 3
+            return [self._rgb[off], self._rgb[off + 1], self._rgb[off + 2]]
+        return [self._d[y * self._w + x]]
 
     def draw_rect(self, x, y, w, h, **kw):
         self.drawn.append(("rect", x, y, w, h))
@@ -814,6 +824,49 @@ class TestScreenLabel(unittest.TestCase):
         t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
                                  "pixels": 10, "dist": None})])
         self.assertEqual(img.drawn, [])
+
+
+class TestLabConversion(unittest.TestCase):
+    """RGB->LAB 必须和标准值一致, 否则读出来的 LAB 不能拿来写阈值"""
+
+    def test_known_values(self):
+        # 标准 sRGB(D65) 参考值
+        cases = {
+            (255, 0, 0):   (53.24, 80.09, 67.20),
+            (0, 255, 0):   (87.73, -86.18, 83.18),
+            (0, 0, 255):   (32.30, 79.19, -107.86),
+            (255, 255, 255): (100.0, 0.0, 0.0),
+            (0, 0, 0):     (0.0, 0.0, 0.0),
+        }
+        for rgb, exp in cases.items():
+            got = ball_test.rgb2lab(*rgb)
+            for g, e in zip(got, exp):
+                self.assertAlmostEqual(g, e, delta=0.6,
+                                       msg="RGB%s -> LAB%s 期望 %s" % (rgb, got, exp))
+
+    def test_center_readout_from_pixels(self):
+        """read_center_lab 要能对小块取平均并给出合理 LAB"""
+        t = make_tester()
+        # 把整幅画面涂成纯红, 中心读数应接近红色的 LAB
+        img = FakeImage(rgb=bytearray([255, 0, 0] * (640 * 320)))
+        r = ball_test.read_center_lab(img)
+        self.assertIsNotNone(r)
+        (ar, ag, ab), (L, A, B), lo, hi, n = r
+        self.assertAlmostEqual(ar, 255, delta=1)
+        self.assertAlmostEqual(L, 53.24, delta=1.0)
+        self.assertAlmostEqual(A, 80.09, delta=1.0)
+
+    def test_pixel_rgb_variants(self):
+        """get_pixel 可能返回列表/灰度/整数, 都要兼容"""
+        class Img:
+            def __init__(self, v):
+                self.v = v
+            def get_pixel(self, x, y):
+                return self.v
+        self.assertEqual(ball_test._pixel_rgb(Img([183, 42, 38]), 0, 0), (183, 42, 38))
+        self.assertEqual(ball_test._pixel_rgb(Img([200]), 0, 0), (200, 200, 200))
+        self.assertEqual(ball_test._pixel_rgb(Img(0xB72A26), 0, 0), (0xB7, 0x2A, 0x26))
+        self.assertIsNone(ball_test._pixel_rgb(Img(None), 0, 0))
 
 
 if __name__ == "__main__":

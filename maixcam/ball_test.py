@@ -82,12 +82,23 @@ CAM_WIDTH = 640
 CAM_HEIGHT = 320
 
 # ---- 颜色阈值 (LAB) —— v1 里已确认的三组, 现场灯光变了要重标 ----
+#   ⚠ 这三个值目前是"半标定"状态, 等 LAB_READOUT 实测后替换:
+#     红: A_min=0 太宽(会命中肤色/木色), 建议实测后收到 30 左右
+#     绿: 还是官方文档的示例值, 偏宽(会命中灰白)
+#     蓝: 原写成 (.., -20, -56) 即 B_min>B_max -> 空窗口永远匹配不到, 已改成 (-56,-20)
 COLOR_LAB = {
-    1: (11, 68, 29, 75, 21, 33),      # 红
-    2: (25, 52, -41, -5, -16, 28),    # 绿
-    3: (13, 59, -23, 13, -58, -15),   # 蓝
+    1: (0, 80, 0, 80, 10, 80),       # 红  (L, A, B 待实测收窄)
+    2: (0, 80, -120, -10, 0, 30),    # 绿  (官方示例值, 待实测收窄)
+    3: (34, 61, -17, 8, -56, -20),   # 蓝  (已修正 B 顺序)
 }
 COLOR_NAME = {1: "红", 2: "绿", 3: "蓝"}
+
+# ---- LAB 读数 (现场标定阈值用) ---------------------------------------------
+#   True: 每秒打印一次"画面正中那块"的 RGB 与 RGB->LAB 估算值 —— 把球放正中即可读数
+#   原理: get_pixel(x,y) 拿像素 -> 标准 sRGB(D65) 转 LAB, 和 find_blobs 用的 LAB 同一套公式
+LAB_READOUT = True
+LAB_READOUT_MS = 800       # 打印间隔(ms)
+LAB_PATCH_HALF = 6         # 取中心 (2*6+1)^2 = 13x13 的小方块求平均
 
 # ---- 过滤: 只要"像球的" ----
 MIN_AREA = 100          # 小于这么多像素的色块丢掉 (噪点/碎斑)
@@ -228,7 +239,85 @@ def blob_pixels(b):
 
 
 # ==============================================================================
-# 三、距离估算 (第二轮 R1/R2/R4, 第三轮 S2 改成按颜色标定)
+# 三、LAB 读数: 把球放画面正中, 直接读出它的真实 LAB 值 (现场标定阈值用)
+#     依据: 你自己的 tested.py 已验证 get_pixel(x,y) 在 MaixCAM-Pro 上可用(返回列表)
+# ==============================================================================
+def _pixel_rgb(img, x, y):
+    """取一个像素并归一化成 (r, g, b)。get_pixel 可能返回列表/元组/整数, 都兼容"""
+    v = img.get_pixel(x, y)
+    if v is None:
+        return None
+    if isinstance(v, (list, tuple)):
+        if len(v) >= 3:
+            return int(v[0]) & 0xFF, int(v[1]) & 0xFF, int(v[2]) & 0xFF
+        if len(v) >= 1:
+            g = int(v[0]) & 0xFF
+            return g, g, g                     # 灰度图: 三通道相同
+    if isinstance(v, int):
+        return (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF
+    return None
+
+
+def _srgb_to_linear(c):
+    c = c / 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def rgb2lab(r, g, b):
+    """
+    标准 sRGB(D65) -> CIELAB。OpenMV/MaixPy 的 find_blobs 内部也是这套公式,
+    所以这里读出来的 L/A/B 就是可以直接拿来写阈值的数。
+    """
+    rl = _srgb_to_linear(r)
+    gl = _srgb_to_linear(g)
+    bl = _srgb_to_linear(b)
+
+    x = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl
+    y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl
+    z = 0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl
+
+    xn, yn, zn = 0.95047, 1.00000, 1.08883
+    fx = _f(x / xn)
+    fy = _f(y / yn)
+    fz = _f(z / zn)
+
+    L = 116.0 * fy - 16.0
+    A = 500.0 * (fx - fy)
+    B = 200.0 * (fy - fz)
+    return L, A, B
+
+
+def _f(t):
+    return t ** (1.0 / 3.0) if t > 0.008856 else (7.787 * t + 16.0 / 116.0)
+
+
+def read_center_lab(img):
+    """
+    读画面正中一小块区域: 返回 (平均RGB, 平均LAB, LAB最小/最大, 有效像素数)
+    球放在正中时, 这些数字就是该球在**当前灯光下**的真实 LAB
+    """
+    cx, cy = CAM_WIDTH // 2, CAM_HEIGHT // 2
+    h = LAB_PATCH_HALF
+    rs, gs, bs = [], [], []
+    for yy in range(cy - h, cy + h + 1):
+        for xx in range(cx - h, cx + h + 1):
+            if 0 <= xx < CAM_WIDTH and 0 <= yy < CAM_HEIGHT:
+                rgb = _pixel_rgb(img, xx, yy)
+                if rgb is not None:
+                    rs.append(rgb[0]); gs.append(rgb[1]); bs.append(rgb[2])
+    if not rs:
+        return None
+
+    ar, ag, ab = sum(rs) / len(rs), sum(gs) / len(gs), sum(bs) / len(bs)
+    L, A, B = rgb2lab(ar, ag, ab)
+    labs = [rgb2lab(r, g, b) for r, g, b in zip(rs, gs, bs)]
+    lo = (min(v[0] for v in labs), min(v[1] for v in labs), min(v[2] for v in labs))
+    hi = (max(v[0] for v in labs), max(v[1] for v in labs), max(v[2] for v in labs))
+    return (ar, ag, ab), (L, A, B), lo, hi, len(rs)
+
+
+# ==============================================================================
+# 四、距离估算 (第二轮 R1/R2/R4, 第三轮 S2 改成按颜色标定)
 # ==============================================================================
 def _calib_px(color_id):
     v = CALIB_WIDTH_PX.get(color_id, 0.0)
@@ -266,7 +355,7 @@ def distance_ok(d):
 
 
 # ==============================================================================
-# 四、识别: 找"像球的"色块
+# 五、识别: 找"像球的"色块
 # ==============================================================================
 def judge(w, h, pixels):
     """形状判断; 返回 None = 通过, 否则返回被拒绝的原因"""
@@ -359,7 +448,7 @@ def nearest_reject_cm(rejects, color_id):
 
 
 # ==============================================================================
-# 五、主程序
+# 六、主程序
 # ==============================================================================
 def now_ms():
     return int(time.time() * 1000)
@@ -398,6 +487,7 @@ class BallTester:
         self.targets = [1, 2, 3] if ALL_COLORS else [TARGET_COLOR]
         self.t0 = time.time()
         self.draw_err_seen = set()      # 画图报错只打一次, 不刷屏
+        self.lab_last_ms = 0            # LAB 读数的上次打印时间
 
         # ---- 打印状态 ----
         # 逐色模式(PRINT_ONLY_DETECTED=False)用: 每个颜色一套状态
@@ -663,6 +753,25 @@ class BallTester:
                 self._draw_string(img, x, ty, label, txt_cid)
 
     # ------------------------------------------------------------------
+    def print_center_lab(self, img):
+        """打印画面正中那块的平均 RGB / LAB (把球放正中即可读该球的真实 LAB)"""
+        r = read_center_lab(img)
+        if r is None:
+            return
+        (ar, ag, ab), (L, A, B), lo, hi, n = r
+        print("[LAB] 中心%dx%d RGB=(%.0f,%.0f,%.0f)  LAB=(%.1f, %.1f, %.1f)  "
+              "范围 L %.0f~%.0f  A %.0f~%.0f  B %.0f~%.0f"
+              % (2 * LAB_PATCH_HALF + 1, 2 * LAB_PATCH_HALF + 1,
+                 ar, ag, ab, L, A, B,
+                 lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]))
+        # 顺便对比一下当前阈值是否能把中心这块判成某个颜色
+        for cid in self.targets:
+            t = COLOR_LAB[cid]
+            if (t[0] <= L <= t[1]) and (t[2] <= A <= t[3]) and (t[4] <= B <= t[5]):
+                print("       当前阈值 %s(%d) 命中这块区域 %s"
+                      % (COLOR_NAME[cid], cid, list(t)))
+
+    # ------------------------------------------------------------------
     def warn_if_out_of_frame(self, found):
         """
         目标坐标超出画面时提醒一次 —— 球半个在画面外时, 框会贴着边缘甚至看不见,
@@ -734,6 +843,11 @@ class BallTester:
 
             if PRINT_ONLY_DETECTED:
                 self.report_multi(found, rejects_by_color)
+
+            # ---- LAB 读数: 把球放正中, 每秒读一次它的真实 LAB ----
+            if LAB_READOUT and (now_ms() - self.lab_last_ms >= LAB_READOUT_MS):
+                self.lab_last_ms = now_ms()
+                self.print_center_lab(img)
 
             self.draw_result(img, found)
             self.warn_if_out_of_frame(found)
