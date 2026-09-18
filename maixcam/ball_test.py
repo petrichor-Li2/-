@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
- MaixCAM 端 v2 —— 单色小球(排爆物球体)颜色识别 · 纯打印测试版
+ MaixCAM 端 v2 —— 三色小球(红/绿/蓝)颜色识别 · 纯打印测试版
  2026 广东省工科大学生实验综合技能竞赛 · 赛项3
 ================================================================================
 
 【这一版是干什么的】
   MaixCAM 现在只通过 USB 连电脑(用 MaixVision 在线运行), 与 STM32 的串口还没接。
   所以这一版**不参与整机联调**, 只做三件事:
-      1. 把摄像头看到的红色小球找出来
+      1. 把摄像头看到的红/绿/蓝小球找出来 —— **检测到什么颜色就打印什么颜色**
       2. 用像素宽度反推**距离**, 只保留 5~15cm 内的球(把"后面的东西"排掉)
       3. 终端打印 + 屏幕画框(标签用数字形式, 与将来发给 STM32 的串口字段一致)
 
@@ -19,14 +19,13 @@
   3. MaixVision 终端看打印; MaixCAM 屏幕看画框
 
 【终端输出长这样】
-  ===== 红球测试 v2 启动 =====
-  分辨率 640x320  目标颜色 红(1)  阈值 [11, 68, 29, 75, 21, 33]
-  过滤: 面积>=100px  长宽比 0.70~1.40  饱满度 0.50~0.92
-  距离: **未标定** -> 现在不卡距离, 但会把 w 打出来
-  连续识别中...
+  ===== 小球测试 v2 启动 =====
+  分辨率 640x320  检测颜色: 红(1) 绿(2) 蓝(3)
   [  1.20s] 红(1) x=300 y=140 w=60 h=60
-  (标定后) [  2.41s] 红(1) x=330 y=150 w=62 h=58  距离≈9.7cm
-  [  3.02s] 未找到红球  (最近候选 21.3cm, 超出 5~15cm)
+  [  2.05s] 绿(2) x=120 y=160 w=58 h=57
+  [  2.41s] 红(1) x=330 y=150 w=62 h=58  距离≈9.7cm
+  [  3.02s] 未找到任何小球(红/绿/蓝)
+  (标定后每行会追加 距离≈X.Xcm)
 
 【已确认的需求】
   第一轮(详见 maixcam/DEV_LOG.md):
@@ -40,12 +39,18 @@
     8  不带 UART 协议
     9  不加截图 / 不加 FPS 显示
     10 误识别过滤: 最小面积 + 圆度(长宽比 + 饱满度)
-  第二轮(真机试跑后提出):
+  第二轮(真机试跑后):
     R1 距离限定 = 用像素大小反推距离, 并打印 cm 数
-    R2 只接受 5~15cm; 超出时打印"最近候选 xx cm"(区分"没找到"还是"太远被排掉")
+    R2 只接受 5~15cm(超出时打印"最近候选 xx cm")
     R3 屏幕标签改成数字形式(与串口 body 字段一致): 1 x300 y140 w60 h60
-       终端保留中文+数字(真机已验证终端支持 UTF-8 中文)
-    R4 标定值先留空: 未标定时不卡距离, 只打印 w 和提示; 跑一次报 w 后再填
+       终端保留中文+数字(真机已验证终端支持 UTF-8)
+    R4 标定值先留空: 未标定时不卡距离, 只打印 w 和提示
+  第三轮(本次):
+    S1 三种颜色(红/绿/蓝)都检测, 检测到什么颜色就打印什么颜色
+       -> PRINT_ONLY_DETECTED = True: 只打印检到的球; 全场没有时才打印一行
+          "未找到任何小球(红/绿/蓝)", 不会为"没检到的颜色"各刷一行
+    S2 距离标定改成**按颜色分开**: 三个球大小一样就填同一个数;
+       大小不同就各自标定(标定方法见 CALIB_WIDTH_PX 注释)
 ================================================================================
 """
 
@@ -57,11 +62,17 @@ from maix import app, camera, display, image
 # 一、配置区 —— 现场只需要改这里
 # ==============================================================================
 
-# ---- 目标颜色: 1 红 / 2 绿 / 3 蓝 (赛题编码) ----
+# ---- 检测哪些颜色: 赛题编码 1 红 / 2 绿 / 3 蓝 ----
+#   现在三种都检测(检测到什么颜色就打什么颜色)
+ALL_COLORS = True
+#   想只测一种时就把它改成 False, 并把 TARGET_COLOR 设成 1/2/3
 TARGET_COLOR = 1
 
-# ---- 调试用: True 时三种颜色都找、各自独立打印 ----
-ALL_COLORS = False
+# ---- 打印策略 ----
+#   True  : 只打印"检测到的球"; 整幅画面一个都没检到时, 才打印一行"未找到任何小球"
+#           (推荐: 三色同时检测时输出最干净)
+#   False : 每种颜色各自打印, 包括"未找到绿球"这种逐色提示(调单色阈值时用)
+PRINT_ONLY_DETECTED = True
 
 # ---- 相机 ----
 CAM_WIDTH = 640
@@ -82,13 +93,17 @@ ASPECT_MAX = 1.40       # 长宽比 w/h 上限
 FILL_MIN = 0.50         # 饱满度 = 像素数/(w*h): 圆的理想值 ≈ π/4 = 0.785
 FILL_MAX = 0.92         # 实心方块/整块背景 ≈ 1.0, 上限卡掉
 
-# ---- 距离限定 (第二轮 R1~R4) ----------------------------------------------
+# ---- 距离限定 (第二轮 R1~R4 + 第三轮 S2) -----------------------------------
 #   原理: 球在画面里的宽度 w 与距离 d 成反比  ->  d = K / w
-#        K = CALIB_DISTANCE_CM * CALIB_WIDTH_PX
+#        K = CALIB_DISTANCE_CM * CALIB_WIDTH_PX[颜色]
 #   标定: 把球放在 CALIB_DISTANCE_CM 处(比如 10cm), 读终端打印的 w,
-#         把它填进 CALIB_WIDTH_PX 即可(只做一次)
+#         把它填进 CALIB_WIDTH_PX 对应颜色里(只做一次)
 CALIB_DISTANCE_CM = 10.0    # 标定时球放的距离 (cm)
-CALIB_WIDTH_PX = 0.0        # ★标定时读到的 w(像素); 0 = 还没标定(不卡距离)
+CALIB_WIDTH_PX = {          # ★标定时读到的 w(像素); 0 = 该颜色还没标定(不卡该颜色的距离)
+    1: 0.0,                 # 红
+    2: 0.0,                 # 绿
+    3: 0.0,                 # 蓝
+}
 DIST_MIN_CM = 5.0           # 只接受这个范围内的球
 DIST_MAX_CM = 15.0
 PRINT_DISTANCE = True       # 打印估算距离
@@ -100,6 +115,11 @@ SHOW_REJECT = False           # True: 打印结果时附带"被过滤掉的候�
 
 # ---- 屏幕显示 ----
 DRAW = True                   # 画框 + 写数字标签
+RECT_COLOR = {                # 框的颜色按检到的颜色区分, 一眼看出是哪个球
+    1: (255, 0, 0),
+    2: (0, 255, 0),
+    3: (0, 128, 255),
+}
 
 
 # ==============================================================================
@@ -147,20 +167,34 @@ def blob_pixels(b):
 
 
 # ==============================================================================
-# 三、距离估算 (第二轮 R1/R2/R4)
+# 三、距离估算 (第二轮 R1/R2/R4, 第三轮 S2 改成按颜色标定)
 # ==============================================================================
-def calib_ready():
-    return CALIB_WIDTH_PX > 0.0
+def _calib_px(color_id):
+    v = CALIB_WIDTH_PX.get(color_id, 0.0)
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
 
 
-def estimate_distance_cm(w):
+def calib_ready(color_id=None):
+    """color_id 省略时, 只要有一个颜色标定过就算 True"""
+    if color_id is None:
+        return any(_calib_px(c) > 0.0 for c in (1, 2, 3))
+    return _calib_px(color_id) > 0.0
+
+
+def estimate_distance_cm(w, color_id):
     """
-    用像素宽度反推距离: d = K / w,  K = CALIB_DISTANCE_CM * CALIB_WIDTH_PX
-    未标定时返回 None (此时不卡距离, 只打印 w)
+    用像素宽度反推距离: d = K / w,  K = CALIB_DISTANCE_CM * CALIB_WIDTH_PX[颜色]
+    该颜色未标定时返回 None (此时不卡它的距离, 只打印 w)
     """
-    if (not calib_ready()) or w <= 0:
+    if w <= 0:
         return None
-    return (CALIB_DISTANCE_CM * CALIB_WIDTH_PX) / float(w)
+    k_px = _calib_px(color_id)
+    if k_px <= 0.0:
+        return None
+    return (CALIB_DISTANCE_CM * k_px) / float(w)
 
 
 def distance_ok(d):
@@ -235,7 +269,7 @@ def detect_color(img, color_id):
             continue
 
         # ② 距离过滤 (把后面的东西排掉)
-        d = estimate_distance_cm(w) if PRINT_DISTANCE else None
+        d = estimate_distance_cm(w, color_id) if PRINT_DISTANCE else None
         if not distance_ok(d):
             rejects.append((x, y, w, h, px,
                             "距离%.1fcm 超出 %.0f~%.0fcm"
@@ -249,13 +283,13 @@ def detect_color(img, color_id):
     return best, rejects
 
 
-def nearest_reject_cm(rejects):
-    """从被拒候选里找出最近的估算距离(用它的 w 反推), 给"未找到"一个解释"""
-    if not PRINT_DISTANCE or not calib_ready():
+def nearest_reject_cm(rejects, color_id):
+    """从被拒候选里找最近的估算距离(用它的 w 反推), 给"未找到"一个解释"""
+    if not PRINT_DISTANCE or not calib_ready(color_id):
         return None
     ds = []
     for r in rejects:
-        d = estimate_distance_cm(r[2])
+        d = estimate_distance_cm(r[2], color_id)
         if d is not None:
             ds.append(d)
     return min(ds) if ds else None
@@ -268,8 +302,19 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+def format_ball(color_id, best, with_move=False, cx=None, cy=None):
+    """一行结果文本: 红(1) x=300 y=140 w=60 h=60  距离≈9.7cm"""
+    line = "%s(%d) x=%d y=%d w=%d h=%d" % (
+        COLOR_NAME[color_id], color_id,
+        best["x"], best["y"], best["w"], best["h"])
+    if best.get("dist") is not None:
+        line += "  距离≈%.1fcm" % best["dist"]
+    if with_move and (cx is not None):
+        line += "  (中心 %d,%d)" % (cx, cy)
+    return line
+
+
 class BallTester:
-    """每个颜色一套打印状态, ALL_COLORS=True 时也不会互相干扰"""
 
     def __init__(self):
         try:
@@ -288,9 +333,16 @@ class BallTester:
                 self.disp = None
 
         self.targets = [1, 2, 3] if ALL_COLORS else [TARGET_COLOR]
+        self.t0 = time.time()
+
+        # ---- 打印状态 ----
+        # 逐色模式(PRINT_ONLY_DETECTED=False)用: 每个颜色一套状态
         self.st = {cid: {"found": None, "cx": None, "cy": None, "t": 0}
                    for cid in self.targets}
-        self.t0 = time.time()
+        # 只报检到模式(True)用: 上一帧检到的颜色与中心点
+        self.prev_centers = {}          # {cid: (cx, cy)}
+        self.prev_keys = ()             # 上一帧检到的颜色集合
+        self.last_any_ms = 0
 
     # ------------------------------------------------------------------
     def elapsed_s(self):
@@ -298,40 +350,50 @@ class BallTester:
 
     # ------------------------------------------------------------------
     def banner(self):
-        print("===== 红球测试 v2 启动 =====")
-        print("分辨率 %dx%d  目标颜色 %s(%d)  阈值 %s"
-              % (CAM_WIDTH, CAM_HEIGHT, COLOR_NAME[TARGET_COLOR],
-                 TARGET_COLOR, list(COLOR_LAB[TARGET_COLOR])))
-        if ALL_COLORS:
-            print("注意: ALL_COLORS=True, 三种颜色都会找并各自独立打印")
+        print("===== 小球测试 v2 启动 =====")
+        print("分辨率 %dx%d  检测颜色: %s"
+              % (CAM_WIDTH, CAM_HEIGHT,
+                 " ".join("%s(%d)" % (COLOR_NAME[c], c) for c in self.targets)))
+        if not ALL_COLORS:
+            print("注意: 当前只测 %s(%d) —— 想三色都测就把 ALL_COLORS 改成 True"
+                  % (COLOR_NAME[TARGET_COLOR], TARGET_COLOR))
         print("过滤: 面积>=%dpx  长宽比 %.2f~%.2f  饱满度 %.2f~%.2f"
               % (MIN_AREA, ASPECT_MIN, ASPECT_MAX, FILL_MIN, FILL_MAX))
-        if calib_ready():
-            print("距离: 已标定 (%.0fcm 时 w=%dpx, K=%.0f)  只接受 %.0f~%.0fcm"
-                  % (CALIB_DISTANCE_CM, int(CALIB_WIDTH_PX),
-                     CALIB_DISTANCE_CM * CALIB_WIDTH_PX,
-                     DIST_MIN_CM, DIST_MAX_CM))
+
+        ready = [c for c in self.targets if calib_ready(c)]
+        if ready:
+            print("距离: 已标定 %s  只接受 %.0f~%.0fcm"
+                  % (" ".join("%s %dpx" % (COLOR_NAME[c], int(_calib_px(c)))
+                              for c in ready), DIST_MIN_CM, DIST_MAX_CM))
+            left = [c for c in self.targets if not calib_ready(c)]
+            if left:
+                print("      未标定: %s (这几个颜色暂时不卡距离)"
+                      % " ".join(COLOR_NAME[c] for c in left))
         else:
             print("距离: **未标定** -> 现在不卡距离, 但会把 w 打出来;")
-            print("      把球放到 %.0fcm 处, 读下面的 w=?? , 填进 CALIB_WIDTH_PX"
+            print("      把球放到 %.0fcm 处, 读下面的 w=?? , 填进 CALIB_WIDTH_PX 对应颜色"
                   % CALIB_DISTANCE_CM)
-        print("打印: 有球<->无球切换立即打; 位移超过 %dpx 且间隔>%dms 才再打"
-              % (PRINT_MOVE_PX, PRINT_MIN_INTERVAL_MS))
-        if SHOW_REJECT:
-            print("SHOW_REJECT=True: 被过滤的候选会一起打出来")
+
+        if PRINT_ONLY_DETECTED:
+            print("打印: 只报检测到的球; 整幅画面都没有时才打印一行'未找到任何小球'")
+        else:
+            print("打印: 每种颜色各自独立打印(含'未找到X球')")
+        print("      位移超过 %dpx 且间隔>%dms 才重复打印" %
+              (PRINT_MOVE_PX, PRINT_MIN_INTERVAL_MS))
 
     # ------------------------------------------------------------------
-    def report(self, color_id, best, rejects):
-        """打印 + 更新这个颜色的状态; 返回是否打印了"""
+    # 逐色模式 (PRINT_ONLY_DETECTED = False)
+    # ------------------------------------------------------------------
+    def report_one(self, color_id, best, rejects):
+        """逐色模式: 打印 + 更新这个颜色的状态; 返回是否打印了"""
         s = self.st[color_id]
         t_ms = now_ms()
 
-        # ---------- 没找到 ----------
         if best is None:
-            if s["found"] is not False:              # 有球 -> 无球, 立刻打
+            if s["found"] is not False:
                 line = "[%6.2fs] 未找到%s球" % (self.elapsed_s(),
                                                 COLOR_NAME[color_id])
-                nd = nearest_reject_cm(rejects)
+                nd = nearest_reject_cm(rejects, color_id)
                 if (nd is not None) and (not distance_ok(nd)):
                     line += "  (最近候选 %.1fcm, 超出 %.0f~%.0fcm)" % (
                         nd, DIST_MIN_CM, DIST_MAX_CM)
@@ -346,11 +408,8 @@ class BallTester:
                 return True
             return False
 
-        # ---------- 找到 ----------
-        x, y, w, h, px = (best["x"], best["y"], best["w"], best["h"],
-                          best["pixels"])
+        x, y, w, h = best["x"], best["y"], best["w"], best["h"]
         cx, cy = x + w // 2, y + h // 2
-
         state_changed = (s["found"] is not True)
         moved = False
         if not state_changed and s["cx"] is not None:
@@ -360,44 +419,95 @@ class BallTester:
                 moved = True
 
         if not (state_changed or moved):
-            s["cx"], s["cy"] = cx, cy      # 记最新位置, 但不打印
+            s["cx"], s["cy"] = cx, cy
             return False
 
-        line = "[%6.2fs] %s(%d) x=%d y=%d w=%d h=%d" % (
-            self.elapsed_s(), COLOR_NAME[color_id], color_id, x, y, w, h)
-        if best.get("dist") is not None:
-            line += "  距离≈%.1fcm" % best["dist"]
-        if moved:
-            line += "  (中心 %d,%d)" % (cx, cy)
-        if SHOW_REJECT and rejects:
-            line += "  (另过滤掉 %d 个候选)" % len(rejects)
-        print(line)
-
+        print("[%6.2fs] %s" % (self.elapsed_s(),
+                               format_ball(color_id, best, moved, cx, cy)))
         s["found"] = True
         s["cx"], s["cy"] = cx, cy
         s["t"] = t_ms
         return True
 
     # ------------------------------------------------------------------
-    def draw_result(self, img, found_list):
+    # 只报检到模式 (PRINT_ONLY_DETECTED = True) —— 第三轮 S1
+    # ------------------------------------------------------------------
+    def report_multi(self, found, rejects_by_color):
         """
-        屏幕上画框 + 写标签。
-        标签用**数字形式**(纯 ASCII), 字段顺序与将来发给 STM32 的串口 body 一致:
+        found: [(cid, best), ...]  本帧检到的球
+        只打印"检到的"; 整幅画面一个都没有时, 若上一帧有, 打印一行"未找到任何小球"
+        """
+        t_ms = now_ms()
+
+        if not found:
+            if self.prev_keys:
+                line = "[%6.2fs] 未找到任何小球(%s)" % (
+                    self.elapsed_s(),
+                    "/".join(COLOR_NAME[c] for c in self.targets))
+                # 有候选但被"距离"排掉的, 给出提示
+                hints = []
+                for cid in self.targets:
+                    nd = nearest_reject_cm(rejects_by_color.get(cid, []), cid)
+                    if (nd is not None) and (not distance_ok(nd)):
+                        hints.append("%s %.1fcm" % (COLOR_NAME[cid], nd))
+                if hints:
+                    line += "  (最近候选 " + ", ".join(hints) + \
+                            ", 超出 %.0f~%.0fcm)" % (DIST_MIN_CM, DIST_MAX_CM)
+                elif SHOW_REJECT:
+                    n = sum(len(v) for v in rejects_by_color.values())
+                    if n:
+                        line += "  (共过滤掉 %d 个候选)" % n
+                print(line)
+                self.prev_keys = ()
+                self.prev_centers = {}
+                self.last_any_ms = t_ms
+            return
+
+        keys = tuple(sorted(cid for cid, _ in found))
+        printed_any = False
+
+        for cid, best in found:
+            x, y, w, h = best["x"], best["y"], best["w"], best["h"]
+            cx, cy = x + w // 2, y + h // 2
+
+            prev = self.prev_centers.get(cid)
+            is_new = (prev is None)
+            moved = False
+            if (not is_new) and (t_ms - self.last_any_ms >= PRINT_MIN_INTERVAL_MS):
+                if (abs(cx - prev[0]) > PRINT_MOVE_PX or
+                        abs(cy - prev[1]) > PRINT_MOVE_PX):
+                    moved = True
+
+            if is_new or moved:
+                print("[%6.2fs] %s" % (self.elapsed_s(),
+                                       format_ball(cid, best, moved, cx, cy)))
+                printed_any = True
+
+            self.prev_centers[cid] = (cx, cy)
+
+        if printed_any:
+            self.last_any_ms = t_ms
+        self.prev_keys = keys
+
+    # ------------------------------------------------------------------
+    def draw_result(self, img, found):
+        """
+        屏幕上给每个检到的球画框 + 写标签。
+        标签是**数字形式**(纯 ASCII), 字段顺序与将来发给 STM32 的串口 body 一致:
             <颜色编号> x<> y<> w<> h<>
-        这样既避开了默认字体不支持中文的问题(之前显示成问号),
-        又和以后要发给单片机的数据完全对得上。
+        框的颜色按检到的颜色区分(红球红框/绿球绿框/蓝球蓝框)。
         """
         if self.disp is None:
             return
-        for cid, best in found_list:
+        for cid, best in found:
             try:
                 x, y, w, h = best["x"], best["y"], best["w"], best["h"]
-                img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=2)
+                color = RECT_COLOR.get(cid, (0, 255, 0))
+                img.draw_rect(x, y, w, h, color=color, thickness=2)
 
                 label = "%d x%d y%d w%d h%d" % (cid, x, y, w, h)
                 ty = y - 22 if y > 26 else y + 2
-                img.draw_string(x, ty, label,
-                                color=image.COLOR_GREEN, scale=1.0)
+                img.draw_string(x, ty, label, color=color, scale=1.0)
             except Exception:
                 pass
 
@@ -409,14 +519,21 @@ class BallTester:
         while not app.need_exit():
             img = self.cam.read()
 
-            found_list = []
+            found = []
+            rejects_by_color = {}
             for cid in self.targets:
                 best, rejects = detect_color(img, cid)
-                self.report(cid, best, rejects)
-                if best is not None:
-                    found_list.append((cid, best))
+                rejects_by_color[cid] = rejects
+                if PRINT_ONLY_DETECTED:
+                    if best is not None:
+                        found.append((cid, best))
+                else:
+                    self.report_one(cid, best, rejects)
 
-            self.draw_result(img, found_list)
+            if PRINT_ONLY_DETECTED:
+                self.report_multi(found, rejects_by_color)
+
+            self.draw_result(img, found)
 
             if self.disp is not None:
                 try:
