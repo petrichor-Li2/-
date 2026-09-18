@@ -140,18 +140,43 @@ def _val(obj, name, default=None):
         return default
 
 
-def color_of(color_id):
-    """
-    取画框/写字要用的颜色。
-    优先用 image 模块自带常量(image.COLOR_RED / COLOR_GREEN / COLOR_BLUE) —— 官方文档里
-    draw_rect 用的就是 image.COLOR_GREEN, 最兼容; 老版本或没有该常量时退回 RGB 元组。
-    """
+# 画图用的颜色形式: 不同固件支持的不一样(Color.from_rgb / COLOR_XXX 常量 / 元组 / 整数),
+# 代码会自动依次试, 记住能用的那种。None = 还没试出来。
+_COLOR_MODE = None
+
+
+def color_candidates(color_id):
+    """按"最可能被支持"的顺序, 列出画图颜色的几种写法"""
+    r, g, b = RECT_COLOR_RGB.get(color_id, (0, 255, 0))
+    out = []
+
+    # ① image.Color.from_rgb(r,g,b) —— 官方 API 文档写法
+    try:
+        f = getattr(getattr(image, "Color", None), "from_rgb", None)
+        if callable(f):
+            out.append(("Color.from_rgb", f(r, g, b)))
+    except Exception:
+        pass
+
+    # ② image.COLOR_XXX 常量 —— 官网 find_blobs 例子里用的是 image.COLOR_GREEN
     cname = {1: "COLOR_RED", 2: "COLOR_GREEN", 3: "COLOR_BLUE"}.get(color_id)
     if cname:
         c = getattr(image, cname, None)
         if c is not None:
-            return c
-    return RECT_COLOR_RGB.get(color_id, (0, 255, 0))
+            out.append((cname, c))
+
+    # ③ 直接给 (r,g,b) 元组 —— API 文档里 draw_rect 也接受元组
+    out.append(("rgb tuple", (r, g, b)))
+
+    # ④ 直接给 0xRRGGBB 整数
+    out.append(("rgb int", (r << 16) | (g << 8) | b))
+
+    # 已经试出可用的写法, 就只用它, 不再每次试错
+    if _COLOR_MODE is not None:
+        picked = [c for c in out if c[0] == _COLOR_MODE]
+        if picked:
+            return picked
+    return out
 
 
 def blob_box(b):
@@ -509,43 +534,78 @@ class BallTester:
         self.prev_keys = keys
 
     # ------------------------------------------------------------------
+    # 画图: 颜色写法自动试错 —— 不同 MaixPy 固件支持的形式不一样, 不再猜
+    # ------------------------------------------------------------------
+    def _draw_rect(self, img, x, y, w, h, cid):
+        global _COLOR_MODE
+        errs = []
+        for name, c in color_candidates(cid):
+            try:
+                img.draw_rect(x, y, w, h, color=c, thickness=2)
+                if _COLOR_MODE is None:
+                    _COLOR_MODE = name
+                    if DRAW_DEBUG:
+                        print("[提示] 画框可用的颜色写法: %s" % name)
+                return True
+            except Exception as e:
+                errs.append("%s -> %r" % (name, e))
+        if "draw_rect" not in self.draw_err_seen:
+            self.draw_err_seen.add("draw_rect")
+            print("[错误] draw_rect 四种颜色写法都失败了:")
+            for e in errs:
+                print("        ", e)
+            print("        -> 把这几行发我, 我按你的固件改")
+        return False
+
+    def _draw_string(self, img, x, y, s, cid):
+        global _COLOR_MODE
+        errs = []
+        for name, c in color_candidates(cid):
+            try:
+                img.draw_string(x, y, s, color=c, scale=1.0)
+                return True
+            except Exception as e:
+                errs.append("%s -> %r" % (name, e))
+            # 有些固件的参数名不叫 color / scale
+            try:
+                img.draw_string(x, y, s, c, 1.0)
+                return True
+            except Exception as e:
+                errs.append("位置参数 -> %r" % (e,))
+        if "draw_string" not in self.draw_err_seen:
+            self.draw_err_seen.add("draw_string")
+            print("[错误] draw_string 各种写法都失败了:")
+            for e in errs[:4]:
+                print("        ", e)
+        return False
+
+    # ------------------------------------------------------------------
     def draw_result(self, img, found):
         """
         屏幕上给每个检到的球画框 + 写标签。
         标签是**数字形式**(纯 ASCII), 字段顺序与将来发给 STM32 的串口 body 一致:
             <颜色编号> x<> y<> w<> h<>
-        框的颜色按检到的颜色区分(红球红框/绿球绿框/蓝球蓝框)。
-
-        注意: 画框和写字**分开 try/except**, 这样万一写字那步不被支持,
-        框仍然会画出来(之前把两步放在一个 try 里, 写字报错会导致连框都没有)。
+        画框与写字**各自独立**, 互不影响; 颜色写法自动试错。
         """
         if self.disp is None:
             return
         for cid, best in found:
             x, y, w, h = best["x"], best["y"], best["w"], best["h"]
-            color = color_of(cid)
 
             # ① 画框
-            try:
-                img.draw_rect(x, y, w, h, color=color, thickness=2)
-            except Exception as e:
-                self._draw_err("draw_rect", e)
+            self._draw_rect(img, x, y, w, h, cid)
 
             # ② 写字(失败也不影响框)
-            try:
-                label = "%d x%d y%d w%d h%d" % (cid, x, y, w, h)
-                ty = y - 22 if y > 26 else y + 2
-                img.draw_string(x, ty, label, color=color, scale=1.0)
-            except Exception as e:
-                self._draw_err("draw_string", e)
+            label = "%d x%d y%d w%d h%d" % (cid, x, y, w, h)
+            ty = y - 22 if y > 26 else y + 2
+            self._draw_string(img, x, ty, label, cid)
 
     # ------------------------------------------------------------------
     def _draw_err(self, what, e):
-        """画图出错: 默认只记一次不刷屏; DRAW_DEBUG=True 时打印出来"""
+        """其它画图相关错误(如 display.show): 默认只记一次不刷屏"""
         if DRAW_DEBUG and (what not in self.draw_err_seen):
             self.draw_err_seen.add(what)
             print("[错误] %s 失败: %r" % (what, e))
-            print("       -> 屏幕上看不到框; 可把 DRAW_DEBUG 关掉, 或告诉我这行报错")
 
     # ------------------------------------------------------------------
     def draw_selftest(self, img, seconds=2.0):
@@ -553,20 +613,15 @@ class BallTester:
         画图自检: 启动后前几秒在画面正中画一个测试框 + DRAW TEST。
         用来区分两种"屏幕上没框":
            · 能看到这个测试框  -> 画图 API 正常, 问题在"没检测到球"
-           · 连测试框都没有    -> 画图 API / display 有问题(看 DRAW_DEBUG 的报错)
+           · 连测试框都没有    -> 画图 API / display 有问题(终端会打印错误)
         """
         if (self.disp is None) or (self.elapsed_s() > seconds):
             return
-        try:
-            w, h = 220, 110
-            x = (CAM_WIDTH - w) // 2
-            y = (CAM_HEIGHT - h) // 2
-            c = color_of(1)
-            img.draw_rect(x, y, w, h, color=c, thickness=2)
-            img.draw_string(x + 6, y + 6, "DRAW TEST",
-                            color=c, scale=1.2)
-        except Exception as e:
-            self._draw_err("selftest", e)
+        w, h = 220, 110
+        x = (CAM_WIDTH - w) // 2
+        y = (CAM_HEIGHT - h) // 2
+        self._draw_rect(img, x, y, w, h, 1)
+        self._draw_string(img, x + 6, y + 6, "DRAW TEST", 1)
 
     # ------------------------------------------------------------------
     def run(self):

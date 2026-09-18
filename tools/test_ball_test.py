@@ -168,9 +168,11 @@ def make_tester(frames=None):
     """构造一个已初始化的 BallTester (相机用假帧)"""
     if frames:
         sys.modules["maix.camera"].Camera = None
+    ball_test._COLOR_MODE = None        # 清掉"哪种颜色写法可用"的缓存
     t = ball_test.BallTester.__new__(ball_test.BallTester)   # 不调 __init__
     t.cam = None
     t.disp = None
+    t.draw_err_seen = set()
     t.targets = [1, 2, 3] if ball_test.ALL_COLORS else [ball_test.TARGET_COLOR]
     t.st = {cid: {"found": None, "cx": None, "cy": None, "t": 0}
             for cid in t.targets}
@@ -653,7 +655,7 @@ class TestScreenLabel(unittest.TestCase):
         self.assertEqual(len(rects), 1, "文字画不出来时, 框不能一起消失")
 
     def test_draw_error_is_reported(self):
-        """DRAW_DEBUG=True 时, 画图报错要打出来(默认静默, 之前就是这个把人坑了)"""
+        """四种颜色写法全都不被支持时, 必须把报错打出来(不能静默失败)"""
         t = make_tester()
         t.disp = object()
         t.draw_err_seen = set()
@@ -663,19 +665,38 @@ class TestScreenLabel(unittest.TestCase):
             raise ValueError("color 参数不支持这种写法")
 
         img.draw_rect = boom
-        ball_test.DRAW_DEBUG = True
-        try:
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
-                                         "pixels": 10, "dist": None})])
-                t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
-                                         "pixels": 10, "dist": None})])
-            out = buf.getvalue()
-        finally:
-            ball_test.DRAW_DEBUG = False
+        target = {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4, "pixels": 10,
+                  "dist": None}
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            t.draw_result(img, [(1, target)])
+            t.draw_result(img, [(1, target)])       # 第二次不该再刷
+        out = buf.getvalue()
         self.assertIn("draw_rect", out)
-        self.assertEqual(out.count("[错误] draw_rect"), 1, "同样的错误只报一次, 不刷屏")
+        self.assertIn("都失败", out)
+        self.assertEqual(out.count("[错误] draw_rect"), 1, "同样的错误只报一次")
+
+    def test_color_form_fallback(self):
+        """颜色写法要能自动降级: 前几种不被支持时, 后面能用的那种要顶上"""
+        t = make_tester()
+        t.disp = object()
+        img = img_with(red=[])
+        tried = []
+
+        def rect(x, y, w, h, color=0, thickness=1):
+            tried.append(color)
+            if not isinstance(color, int):          # 这个"固件"只认整数形式
+                raise TypeError("color must be int")
+            img.drawn.append(("rect", x, y, w, h))
+
+        img.draw_rect = rect
+        t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
+                                 "pixels": 10, "dist": None})])
+        self.assertEqual(len([d for d in img.drawn if d[0] == "rect"]), 1,
+                         "应该降级到能用的颜色写法并把框画出来")
+        self.assertEqual(ball_test._COLOR_MODE, "rgb int",
+                         "并记住这次可用的写法")
+        self.assertGreaterEqual(len(tried), 2, "至少试过两种写法")
 
     def test_draw_flag_off(self):
         t = make_tester()
