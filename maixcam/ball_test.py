@@ -120,6 +120,9 @@ DRAW_DEBUG = True        # True: 打印"当前用的是哪种颜色写法"/画�
 DRAW_SELFTEST = True     # True: 启动后前 2 秒在画面正中画一个测试框 + "DRAW TEST"
                          #       用来区分"画图 API 有问题"和"没检测到球"
                          #       (正在排查, 查完可以改回 False)
+LABEL_FIXED_POS = True   # True: 文字标签固定写在画面左上角(多个球依次往下排)
+                         #       这样即使球的框在屏幕可见区域之外, 数字也一定看得到
+                         #       False: 标签跟在框旁边(好看但可能跑出可见区域)
 # 框色: 优先用 image 模块自带的常量(最兼容), 拿不到才用下面这组 RGB 元组
 RECT_COLOR_RGB = {
     1: (255, 0, 0),      # 红球红框
@@ -591,7 +594,7 @@ class BallTester:
         """
         if self.disp is None:
             return
-        for cid, best in found:
+        for i, (cid, best) in enumerate(found):
             x, y, w, h = best["x"], best["y"], best["w"], best["h"]
 
             # ① 画框
@@ -599,8 +602,28 @@ class BallTester:
 
             # ② 写字(失败也不影响框)
             label = "%d x%d y%d w%d h%d" % (cid, x, y, w, h)
-            ty = y - 22 if y > 26 else y + 2
-            self._draw_string(img, x, ty, label, cid)
+            if LABEL_FIXED_POS:
+                self._draw_string(img, 4, 4 + i * 24, label, cid)
+            else:
+                ty = y - 22 if y > 26 else y + 2
+                self._draw_string(img, x, ty, label, cid)
+
+    # ------------------------------------------------------------------
+    def warn_if_out_of_frame(self, found):
+        """
+        目标坐标超出画面时提醒一次 —— 球半个在画面外时, 框会贴着边缘甚至看不见,
+        终端里这行警告能立刻说明是"球的位置问题"而不是"画图坏了"
+        """
+        for cid, best in found:
+            x, y, w, h = best["x"], best["y"], best["w"], best["h"]
+            if (x < 0) or (y < 0) or (x + w > CAM_WIDTH) or (y + h > CAM_HEIGHT):
+                if "out_of_frame" not in self.draw_err_seen:
+                    self.draw_err_seen.add("out_of_frame")
+                    print("[警告] 目标超出画面: x=%d y=%d w=%d h=%d (画面 %dx%d)"
+                          % (x, y, w, h, CAM_WIDTH, CAM_HEIGHT))
+                    print("       半个球在画面外时, 框可能贴着边缘甚至看不见 -> "
+                          "把球往画面中间挪一点再看")
+                return
 
     # ------------------------------------------------------------------
     def _draw_err(self, what, e):
@@ -648,6 +671,7 @@ class BallTester:
                 self.report_multi(found, rejects_by_color)
 
             self.draw_result(img, found)
+            self.warn_if_out_of_frame(found)
             if DRAW_SELFTEST:
                 self.draw_selftest(img)
 

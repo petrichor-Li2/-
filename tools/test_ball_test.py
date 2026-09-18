@@ -698,6 +698,38 @@ class TestScreenLabel(unittest.TestCase):
                          "并记住这次可用的写法")
         self.assertGreaterEqual(len(tried), 2, "至少试过两种写法")
 
+    def test_label_fixed_position(self):
+        """LABEL_FIXED_POS=True: 标签固定写在左上角, 不受球的位置影响"""
+        t = make_tester()
+        t.disp = object()
+        img = img_with(red=[])
+        ball_test.LABEL_FIXED_POS = True
+        t.draw_result(img, [(1, {"id": 1, "x": 500, "y": 280, "w": 60, "h": 60,
+                                 "pixels": 2827, "dist": None})])
+        texts = [d for d in img.drawn if d[0] == "text"]
+        self.assertEqual(len(texts), 1)
+        self.assertEqual(texts[0][1:3], (4, 4), "标签应该固定在左上角")
+
+    def test_out_of_frame_warning(self):
+        """目标超出画面时要提醒(而不是让人以为是画图坏了)"""
+        t = make_tester()
+        t.draw_err_seen = set()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            t.warn_if_out_of_frame([(1, {"id": 1, "x": 600, "y": 100, "w": 100,
+                                         "h": 100, "pixels": 9000, "dist": None})])
+        out = buf.getvalue()
+        self.assertIn("[警告] 目标超出画面", out)
+
+    def test_in_frame_no_warning(self):
+        t = make_tester()
+        t.draw_err_seen = set()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            t.warn_if_out_of_frame([(1, {"id": 1, "x": 100, "y": 100, "w": 100,
+                                         "h": 100, "pixels": 9000, "dist": None})])
+        self.assertEqual(buf.getvalue().strip(), "")
+
     def test_draw_flag_off(self):
         t = make_tester()
         t.disp = None
