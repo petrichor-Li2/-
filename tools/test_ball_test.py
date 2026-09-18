@@ -637,6 +637,46 @@ class TestScreenLabel(unittest.TestCase):
         text = [d[3] for d in img.drawn if d[0] == "text"][0]
         self.assertTrue(all(ord(c) < 128 for c in text), "标签里不该有非 ASCII 字符")
 
+    def test_rect_survives_string_failure(self):
+        """写字那步不被支持时, 框也必须画出来(之前两步共用一个 try, 会连框都没有)"""
+        t = make_tester()
+        t.disp = object()
+        img = img_with(red=[])
+
+        def boom(*a, **k):
+            raise TypeError("draw_string 签名不支持")
+
+        img.draw_string = boom
+        t.draw_result(img, [(1, {"id": 1, "x": 10, "y": 20, "w": 30, "h": 40,
+                                 "pixels": 942, "dist": None})])
+        rects = [d for d in img.drawn if d[0] == "rect"]
+        self.assertEqual(len(rects), 1, "文字画不出来时, 框不能一起消失")
+
+    def test_draw_error_is_reported(self):
+        """DRAW_DEBUG=True 时, 画图报错要打出来(默认静默, 之前就是这个把人坑了)"""
+        t = make_tester()
+        t.disp = object()
+        t.draw_err_seen = set()
+        img = img_with(red=[])
+
+        def boom(*a, **k):
+            raise ValueError("color 参数不支持这种写法")
+
+        img.draw_rect = boom
+        ball_test.DRAW_DEBUG = True
+        try:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
+                                         "pixels": 10, "dist": None})])
+                t.draw_result(img, [(1, {"id": 1, "x": 1, "y": 2, "w": 3, "h": 4,
+                                         "pixels": 10, "dist": None})])
+            out = buf.getvalue()
+        finally:
+            ball_test.DRAW_DEBUG = False
+        self.assertIn("draw_rect", out)
+        self.assertEqual(out.count("[错误] draw_rect"), 1, "同样的错误只报一次, 不刷屏")
+
     def test_draw_flag_off(self):
         t = make_tester()
         t.disp = None

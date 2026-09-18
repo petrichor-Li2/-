@@ -50,7 +50,19 @@
 | `PRINT_MOVE_PX` | `20` | 中心移动超过多少像素才再打一行 |
 | `PRINT_MIN_INTERVAL_MS` | `1000` | 位移打印的最小间隔（兜底限流）；**丢球/检到不受此限** |
 | `SHOW_REJECT` | `False` | 设 `True` 会把被过滤掉的候选及原因打出来（调阈值/过滤参数时非常有用） |
-| `DRAW` / `RECT_COLOR` | `True` | 是否画框；框的颜色按检到的颜色区分（红球红框/绿球绿框/蓝球蓝框） |
+| `DRAW` | `True` | 是否画框 + 写数字标签 |
+| `DRAW_DEBUG` | `False` | **屏幕上没有框时打开它**：把 `draw_rect` / `draw_string` / `display.show` 的报错打出来（默认静默，曾经因此查不出问题） |
+| `DRAW_SELFTEST` | `False` | 启动后前 2 秒在画面正中画一个 `DRAW TEST` 框：**能看见 = 画图 API 正常，问题在"没检测到球"**；看不见 = 画图/显示有问题 |
+| `RECT_COLOR_RGB` | — | 兜底颜色；框色优先用 `image.COLOR_RED/COLOR_GREEN/COLOR_BLUE` 常量（最兼容） |
+
+### 屏幕上没有框？按这个顺序查
+
+1. 先把 **`DRAW_DEBUG = True`** → 再看终端有没有 `[错误] draw_rect 失败: ...`
+   * 有报错 → 就是画图 API 的参数问题，把报错原文发我
+   * 没有报错 → 说明**根本没检到球**（画框只在检到球时才画），去看终端有没有 `红(1) x=..` 那种行
+2. 再把 **`DRAW_SELFTEST = True`** → 启动后 2 秒内画面正中应该出现一个 `DRAW TEST` 框
+   * 测试框能看见 → 画图没问题，是识别/过滤把球筛掉了 → 打开 `SHOW_REJECT = True` 看被过滤的原因
+   * 测试框也看不见 → `display` 或画图 API 有问题，把 `DRAW_DEBUG` 的报错发我
 
 ### 三色检测的输出长什么样
 

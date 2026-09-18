@@ -114,11 +114,15 @@ PRINT_MIN_INTERVAL_MS = 1000  # 位移打印的最小间隔(兜底限流); 有�
 SHOW_REJECT = False           # True: 打印结果时附带"被过滤掉的候选及原因"
 
 # ---- 屏幕显示 ----
-DRAW = True                   # 画框 + 写数字标签
-RECT_COLOR = {                # 框的颜色按检到的颜色区分, 一眼看出是哪个球
-    1: (255, 0, 0),
-    2: (0, 255, 0),
-    3: (0, 128, 255),
+DRAW = True              # 画框 + 写数字标签
+DRAW_DEBUG = False       # True: 画框/写字失败时把错误原因打出来(排查"屏幕上没有框"时打开)
+DRAW_SELFTEST = False    # True: 启动后前 2 秒在画面正中画一个测试框 + "DRAW TEST"
+                         #       (用来区分"画图 API 有问题"和"没检测到球")
+# 框色: 优先用 image 模块自带的常量(最兼容), 拿不到才用下面这组 RGB 元组
+RECT_COLOR_RGB = {
+    1: (255, 0, 0),      # 红球红框
+    2: (0, 255, 0),      # 绿球绿框
+    3: (0, 128, 255),    # 蓝球蓝框
 }
 
 
@@ -134,6 +138,20 @@ def _val(obj, name, default=None):
         return v() if callable(v) else v
     except Exception:
         return default
+
+
+def color_of(color_id):
+    """
+    取画框/写字要用的颜色。
+    优先用 image 模块自带常量(image.COLOR_RED / COLOR_GREEN / COLOR_BLUE) —— 官方文档里
+    draw_rect 用的就是 image.COLOR_GREEN, 最兼容; 老版本或没有该常量时退回 RGB 元组。
+    """
+    cname = {1: "COLOR_RED", 2: "COLOR_GREEN", 3: "COLOR_BLUE"}.get(color_id)
+    if cname:
+        c = getattr(image, cname, None)
+        if c is not None:
+            return c
+    return RECT_COLOR_RGB.get(color_id, (0, 255, 0))
 
 
 def blob_box(b):
@@ -334,6 +352,7 @@ class BallTester:
 
         self.targets = [1, 2, 3] if ALL_COLORS else [TARGET_COLOR]
         self.t0 = time.time()
+        self.draw_err_seen = set()      # 画图报错只打一次, 不刷屏
 
         # ---- 打印状态 ----
         # 逐色模式(PRINT_ONLY_DETECTED=False)用: 每个颜色一套状态
@@ -496,20 +515,58 @@ class BallTester:
         标签是**数字形式**(纯 ASCII), 字段顺序与将来发给 STM32 的串口 body 一致:
             <颜色编号> x<> y<> w<> h<>
         框的颜色按检到的颜色区分(红球红框/绿球绿框/蓝球蓝框)。
+
+        注意: 画框和写字**分开 try/except**, 这样万一写字那步不被支持,
+        框仍然会画出来(之前把两步放在一个 try 里, 写字报错会导致连框都没有)。
         """
         if self.disp is None:
             return
         for cid, best in found:
-            try:
-                x, y, w, h = best["x"], best["y"], best["w"], best["h"]
-                color = RECT_COLOR.get(cid, (0, 255, 0))
-                img.draw_rect(x, y, w, h, color=color, thickness=2)
+            x, y, w, h = best["x"], best["y"], best["w"], best["h"]
+            color = color_of(cid)
 
+            # ① 画框
+            try:
+                img.draw_rect(x, y, w, h, color=color, thickness=2)
+            except Exception as e:
+                self._draw_err("draw_rect", e)
+
+            # ② 写字(失败也不影响框)
+            try:
                 label = "%d x%d y%d w%d h%d" % (cid, x, y, w, h)
                 ty = y - 22 if y > 26 else y + 2
                 img.draw_string(x, ty, label, color=color, scale=1.0)
-            except Exception:
-                pass
+            except Exception as e:
+                self._draw_err("draw_string", e)
+
+    # ------------------------------------------------------------------
+    def _draw_err(self, what, e):
+        """画图出错: 默认只记一次不刷屏; DRAW_DEBUG=True 时打印出来"""
+        if DRAW_DEBUG and (what not in self.draw_err_seen):
+            self.draw_err_seen.add(what)
+            print("[错误] %s 失败: %r" % (what, e))
+            print("       -> 屏幕上看不到框; 可把 DRAW_DEBUG 关掉, 或告诉我这行报错")
+
+    # ------------------------------------------------------------------
+    def draw_selftest(self, img, seconds=2.0):
+        """
+        画图自检: 启动后前几秒在画面正中画一个测试框 + DRAW TEST。
+        用来区分两种"屏幕上没框":
+           · 能看到这个测试框  -> 画图 API 正常, 问题在"没检测到球"
+           · 连测试框都没有    -> 画图 API / display 有问题(看 DRAW_DEBUG 的报错)
+        """
+        if (self.disp is None) or (self.elapsed_s() > seconds):
+            return
+        try:
+            w, h = 220, 110
+            x = (CAM_WIDTH - w) // 2
+            y = (CAM_HEIGHT - h) // 2
+            c = color_of(1)
+            img.draw_rect(x, y, w, h, color=c, thickness=2)
+            img.draw_string(x + 6, y + 6, "DRAW TEST",
+                            color=c, scale=1.2)
+        except Exception as e:
+            self._draw_err("selftest", e)
 
     # ------------------------------------------------------------------
     def run(self):
@@ -534,12 +591,14 @@ class BallTester:
                 self.report_multi(found, rejects_by_color)
 
             self.draw_result(img, found)
+            if DRAW_SELFTEST:
+                self.draw_selftest(img)
 
             if self.disp is not None:
                 try:
                     self.disp.show(img)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._draw_err("display.show", e)
 
 
 def main():
