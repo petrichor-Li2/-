@@ -411,6 +411,20 @@ class BallTester:
         print("分辨率 %dx%d  检测颜色: %s"
               % (CAM_WIDTH, CAM_HEIGHT,
                  " ".join("%s(%d)" % (COLOR_NAME[c], c) for c in self.targets)))
+        # 屏幕实际尺寸 ≠ 画面尺寸时, show() 会做缩放/裁剪 —— 这会影响"框"看起来在哪
+        if self.disp is not None:
+            try:
+                dw, dh = self.disp.width(), self.disp.height()
+                print("屏幕尺寸 %dx%d (画面 %dx%d)%s"
+                      % (dw, dh, CAM_WIDTH, CAM_HEIGHT,
+                         "" if (dw == CAM_WIDTH and dh == CAM_HEIGHT)
+                         else "  <- 两者不同, 显示时会缩放/裁剪"))
+            except Exception as e:
+                print("读屏幕尺寸失败(不影响使用): %r" % (e,))
+        print("画框: %s 色, 线宽 %d; 文字标签: %s"
+              % ("白" if RECT_COLOR_MODE == "white" else "跟球同",
+                 BOX_THICKNESS,
+                 "固定写在左上角" if LABEL_FIXED_POS else "跟在框旁边"))
         if not ALL_COLORS:
             print("注意: 当前只测 %s(%d) —— 想三色都测就把 ALL_COLORS 改成 True"
                   % (COLOR_NAME[TARGET_COLOR], TARGET_COLOR))
