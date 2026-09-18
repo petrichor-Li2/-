@@ -62,6 +62,9 @@ from maix import app, camera, display, image
 # 一、配置区 —— 现场只需要改这里
 # ==============================================================================
 
+# 版本标记: 只用来在终端 banner 里确认"跑的是哪一版代码", 排查时很有用
+BUILD_TAG = "r5-white-box"
+
 # ---- 检测哪些颜色: 赛题编码 1 红 / 2 绿 / 3 蓝 ----
 #   现在三种都检测(检测到什么颜色就打什么颜色)
 ALL_COLORS = True
@@ -88,6 +91,8 @@ COLOR_NAME = {1: "红", 2: "绿", 3: "蓝"}
 
 # ---- 过滤: 只要"像球的" ----
 MIN_AREA = 100          # 小于这么多像素的色块丢掉 (噪点/碎斑)
+MIN_SIDE_PX = 20        # 宽和高都必须 >= 这么多像素
+                        # (实测有 13x14 的绿色噪点混进来, 真球不会这么小)
 ASPECT_MIN = 0.70       # 长宽比 w/h 下限 (球在画面里近似圆)
 ASPECT_MAX = 1.40       # 长宽比 w/h 上限
 FILL_MIN = 0.50         # 饱满度 = 像素数/(w*h): 圆的理想值 ≈ π/4 = 0.785
@@ -269,6 +274,8 @@ def judge(w, h, pixels):
         return "面积%d<%d" % (pixels, MIN_AREA)
     if w <= 0 or h <= 0:
         return "尺寸异常"
+    if w < MIN_SIDE_PX or h < MIN_SIDE_PX:
+        return "边长%d x %d 小于 %d" % (w, h, MIN_SIDE_PX)
 
     aspect = float(w) / float(h)
     if aspect < ASPECT_MIN or aspect > ASPECT_MAX:
@@ -407,7 +414,7 @@ class BallTester:
 
     # ------------------------------------------------------------------
     def banner(self):
-        print("===== 小球测试 v2 启动 =====")
+        print("===== 小球测试 v2 启动 [%s] =====" % BUILD_TAG)
         print("分辨率 %dx%d  检测颜色: %s"
               % (CAM_WIDTH, CAM_HEIGHT,
                  " ".join("%s(%d)" % (COLOR_NAME[c], c) for c in self.targets)))
@@ -700,8 +707,19 @@ class BallTester:
         self.banner()
         print("连续识别中... (MaixVision 里点停止即结束)")
 
+        first = True
         while not app.need_exit():
             img = self.cam.read()
+            if first:
+                first = False
+                try:
+                    fw, fh = img.width(), img.height()
+                    print("[提示] 相机实际画面尺寸 %dx%d (代码里按 %dx%d 处理)%s"
+                          % (fw, fh, CAM_WIDTH, CAM_HEIGHT,
+                             "" if (fw == CAM_WIDTH and fh == CAM_HEIGHT)
+                             else "  <- 不一致! 坐标/范围判断会偏"))
+                except Exception as e:
+                    print("[提示] 读画面尺寸失败: %r" % (e,))
 
             found = []
             rejects_by_color = {}

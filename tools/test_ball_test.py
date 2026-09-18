@@ -235,6 +235,21 @@ class TestFilters(unittest.TestCase):
         self.assertIsNone(best)
         self.assertIn("面积", rejects[0][5])
 
+    def test_tiny_blob_rejected_by_min_side(self):
+        """实测有 13x14 的绿色噪点混进来: 宽或高小于 MIN_SIDE_PX 就该丢掉"""
+        img = img_with(green=[(216, 150, 13, 14, 182)])
+        best, rejects = ball_test.detect_color(img, 2)
+        self.assertIsNone(best, "13x14 的噪点不该被当成球")
+        self.assertEqual(len(rejects), 1)
+        self.assertIn("边长", rejects[0][5])
+
+    def test_normal_ball_still_passes(self):
+        """正常尺寸的球不受最小边长影响"""
+        img = img_with(red=[(84, 161, 86, 70, 4726)])
+        best, rejects = ball_test.detect_color(img, 1)
+        self.assertIsNotNone(best)
+        self.assertEqual(rejects, [])
+
     def test_big_circle_wins(self):
         """多个合格候选 -> 取像素最多的那个"""
         img = img_with(red=[(10, 10, 60, 60, 2827),      # 小圆
