@@ -7,7 +7,7 @@
   *  硬件连接:
   *    USART1  PA9/PA10  -> GM65 扫码模块   9600  8N1
   *    USART2  PA2/PA3   -> MaixCAM-Pro     115200 8N1 (RX 走 DMA)
-  *    PD12/PD13/PD14    -> 三色 LED 红/绿/蓝
+  *    PC10/PC11/PC12    -> 三色 LED 红/绿/蓝
   *    PD15              -> 650nm 激光
   *    PB0               -> 心跳灯
   *
@@ -160,11 +160,13 @@ static void MX_GPIO_Init(void)
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
     __HAL_RCC_GPIOD_CLK_ENABLE();
 
     /* 上电先全部输出低电平 */
     HAL_GPIO_WritePin(GPIOB, HEARTBEAT_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOD, LED_R_PIN | LED_G_PIN | LED_B_PIN | LASER_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LED_R_GPIO_PORT, LED_R_PIN | LED_G_PIN | LED_B_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOD, LASER_PIN, GPIO_PIN_RESET);
 
     GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull  = GPIO_NOPULL;
@@ -174,9 +176,9 @@ static void MX_GPIO_Init(void)
     GPIO_InitStruct.Pin = HEARTBEAT_PIN;
     HAL_GPIO_Init(HEARTBEAT_GPIO_PORT, &GPIO_InitStruct);
 
-    /* 三色 LED: PD12 红 / PD13 绿 / PD14 蓝 */
+    /* 三色 LED: PC10 红 / PC11 绿 / PC12 蓝 */
     GPIO_InitStruct.Pin = LED_R_PIN | LED_G_PIN | LED_B_PIN;
-    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+    HAL_GPIO_Init(LED_R_GPIO_PORT, &GPIO_InitStruct);
 
     /* 激光 PD15 */
     GPIO_InitStruct.Pin = LASER_PIN;

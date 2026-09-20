@@ -25,7 +25,7 @@
  * ==========================================================================
  *  USART1  PA9 (TX) / PA10 (RX)  -> GM65 扫码模块   9600  8N1
  *  USART2  PA2 (TX) / PA3 (RX)   -> MaixCAM-Pro     115200 8N1  (RX 走 DMA)
- *  PD12/13/14                    -> 三色 LED  红/绿/蓝 (高电平点亮)
+ *  PC10/PC11/PC12                -> 三色 LED  红/绿/蓝 (高电平点亮)
  *  PB0                           -> 心跳灯     (高电平点亮)
  *  PD15                          -> 650nm 激光 控制脚 (高电平开激光)
  * ------------------------------------------------------------------------ */
@@ -33,13 +33,14 @@
 #define HEARTBEAT_GPIO_PORT         GPIOB
 #define HEARTBEAT_PIN               GPIO_PIN_0
 
-/* --- 三色 LED --- */
-#define LED_R_GPIO_PORT             GPIOD
-#define LED_R_PIN                   GPIO_PIN_12
-#define LED_G_GPIO_PORT             GPIOD
-#define LED_G_PIN                   GPIO_PIN_13
-#define LED_B_GPIO_PORT             GPIOD
-#define LED_B_PIN                   GPIO_PIN_14
+/* --- 三色 LED (PC10 红 / PC11 绿 / PC12 蓝) ---
+ *  原本在 PD12/13/14, 按要求改到 PC10/11/12（这三个脚不占串口/SWD, 可自由使用） */
+#define LED_R_GPIO_PORT             GPIOC
+#define LED_R_PIN                   GPIO_PIN_10
+#define LED_G_GPIO_PORT             GPIOC
+#define LED_G_PIN                   GPIO_PIN_11
+#define LED_B_GPIO_PORT             GPIOC
+#define LED_B_PIN                   GPIO_PIN_12
 
 /* --- 激光 (650nm 红色) --- */
 #define LASER_GPIO_PORT             GPIOD
