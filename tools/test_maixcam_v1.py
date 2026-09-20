@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_maixcam_vision.py —— 在 PC 上验证 MaixCAM 端视觉算法 (不需要真机)
+test_maixcam_v1.py —— 在 PC 上验证 MaixCAM 端视觉算法 (不需要真机)
 
 做法: 伪造一个 maix 模块 (camera / image / uart / display / app),
 把 maixcam/main.py 当普通 Python 模块导入, 然后用**合成图**喂进去:
@@ -13,7 +13,7 @@ test_maixcam_vision.py —— 在 PC 上验证 MaixCAM 端视觉算法 (不需�
 
 验证 detect_shape() 能不能正确分类, 以及协议组帧/解析是否与 PC 参考实现一致。
 
-    python tools/test_maixcam_vision.py
+    python tools/test_maixcam_v1.py
 """
 
 import os
@@ -216,7 +216,7 @@ FakeImage, FakeUART = install_fake_maix()
 import importlib.util  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
-    "maixcam_main", os.path.join(ROOT, "maixcam", "main.py"))
+    "maixcam_v1", os.path.join(ROOT, "maixcam", "backup", "main_v1_stm32_uart.py"))
 maixcam_main = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(maixcam_main)
 
